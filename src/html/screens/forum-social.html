@@ -38,6 +38,22 @@
             </main>
         </div>
 
+        <div id="peek-clear-modal" class="modal-overlay" style="z-index: 10002;">
+            <div class="modal-window" style="max-width: 360px;">
+                <h3>清空查手机数据</h3>
+                <p style="color: #888; font-size: 13px; line-height: 1.5; margin-bottom: 12px;">清空查手机生成的内容，下次打开应用时会重新生成。</p>
+                <label class="peek-clear-order-option">
+                    <input type="checkbox" id="peek-clear-real-orders" checked>
+                    <span>同时清除该角色的真实商城订单</span>
+                </label>
+                <p style="color: #999; font-size: 12px; line-height: 1.5; margin: 8px 0 16px;">清除订单记录不会退还已消费金额，也不会删除聊天中的订单消息。</p>
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" id="peek-clear-cancel" class="btn btn-neutral" style="flex: 1;">取消</button>
+                    <button type="button" id="peek-clear-confirm" class="btn btn-danger" style="flex: 1;">确认清空</button>
+                </div>
+            </div>
+        </div>
+
         <div id="peek-screen" class="screen">
             <header class="app-header">
                 <button class="back-btn" data-target="chat-room-screen">‹</button>

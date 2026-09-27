@@ -1,5 +1,9 @@
 function createMessageBubbleElement(message, isContinuous = false) {
     const chat = (currentChatType === 'private') ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
+    // 旧版 MCP 活动卡没有消息 id；使用活动 id 补齐，沿用聊天的长按删除流程。
+    if (message.type === 'mcp_activity' && !message.id && message.mcpActivity?.id) {
+        message.id = `mcp_${message.mcpActivity.id}`;
+    }
     // 这里需要把 isThinking 从 message 里解构出来
     let {role, content, timestamp, id, transferStatus, giftStatus, stickerData, senderId, quote, isWithdrawn, originalContent, isStatusUpdate, isThinking} = message;
     // 角色消息中的 {{user}} 替换为当前对话的「我的名字」
@@ -296,7 +300,7 @@ const contentMatch = content.match(/^\[.*?(?:消息|回复)[：:]([\s\S]+)\]$/);
 
         if (styleMode === 'under') {
             const translationDiv = document.createElement('div');
-            translationDiv.className = 'translation-text';
+            translationDiv.className = chat.autoExpandTranslation === true ? 'translation-text active' : 'translation-text';
             translationDiv.textContent = chineseText;
             wrapper.appendChild(translationDiv);
         }
@@ -1170,7 +1174,9 @@ const contentMatch = content.match(/^\[.*?(?:消息|回复)[：:]([\s\S]+)\]$/);
     } else if (imageRecogMatch || urlRegex.test(content)) {
         bubbleElement = document.createElement('div');
         bubbleElement.className = 'image-bubble photo-bubble';
-        bubbleElement.innerHTML = `<img src="${content}" alt="图片消息" onclick="openImageViewer(this.src, '${message.id}')" style="cursor: zoom-in;">`;
+        const imagePart = message.parts && message.parts.find(part => part && part.type === 'image' && part.data);
+        const imageSource = imagePart ? imagePart.data : content;
+        bubbleElement.innerHTML = `<img src="${imageSource}" alt="图片消息" onclick="openImageViewer(this.src, '${message.id}')" style="cursor: zoom-in;">`;
     } else if (textMatch) {
         bubbleElement = document.createElement('div');
         bubbleElement.className = `message-bubble ${isSent ? 'sent' : 'received'}`;

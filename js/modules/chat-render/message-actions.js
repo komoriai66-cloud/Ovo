@@ -82,8 +82,7 @@ window.sendPayResponse = async function(msgId, action) {
 
 function addMessageBubble(message, targetChatId, targetChatType) {
     const isChatRoomActive = document.getElementById('chat-room-screen') && document.getElementById('chat-room-screen').classList.contains('active');
-    const isDocumentVisible = document.visibilityState === 'visible' && (typeof document.hasFocus !== 'function' || document.hasFocus());
-    const isViewingTargetChat = !!isChatRoomActive && isDocumentVisible && targetChatId === currentChatId && targetChatType === currentChatType;
+    const isViewingTargetChat = !!isChatRoomActive && targetChatId === currentChatId && targetChatType === currentChatType;
     const senderChat = (targetChatType === 'private')
         ? db.characters.find(c => c.id === targetChatId)
         : db.groups.find(g => g.id === targetChatId);

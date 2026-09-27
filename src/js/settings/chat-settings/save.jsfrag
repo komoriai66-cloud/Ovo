@@ -196,6 +196,7 @@ async function saveSettingsFromSidebar() {
         }
         e.bilingualModeEnabled = document.getElementById('setting-bilingual-mode').checked;
         e.bilingualBubbleStyle = document.getElementById('setting-bilingual-style').value;
+        e.autoExpandTranslation = document.getElementById('setting-auto-expand-translation').checked;
         
         e.avatarMode = document.getElementById('setting-avatar-mode').value;
         e.avatarRadius = parseInt(document.getElementById('setting-avatar-radius').value, 10);

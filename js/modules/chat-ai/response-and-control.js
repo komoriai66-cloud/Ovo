@@ -175,6 +175,21 @@ function executePhoneControlCommands(text, controllingChar) {
     return { cleaned, executed };
 }
 
+function extractThinkingBlocks(response) {
+    const blocks = [];
+    const content = String(response || '').replace(/<(thinking|think)>([\s\S]*?)<\/\1>/gi, (_, tag, body) => {
+        blocks.push(body);
+        return '';
+    });
+    if (/^\s*<(?:thinking|think)>/i.test(content)) {
+        console.warn('[CoT] 思考标签未闭合，无法安全分离思考与回复');
+    }
+    return {
+        content,
+        thinking: blocks.length ? `<thinking>${blocks.join('\n\n')}</thinking>` : ''
+    };
+}
+
 async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChatType, isBackground = false, isCharBlockedMonologue = false, replyOptions = {}) {
     const rawResponse = fullResponse;
     const saveReplyTargetChat = async () => {
@@ -231,10 +246,10 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             }
         }
 
-        // 1.7 捕获并分离 <thinking> 内容 (必须在提取摘要前执行，防止思维链内部的摘要标签被误提取)
-        const thinkingMatch = fullResponse.match(/<thinking>([\s\S]*)<\/thinking>/);
-        if (thinkingMatch) {
-            const thinkingContent = thinkingMatch[0]; // 包含标签的完整内容
+        // 1.7 捕获并分离 <thinking>/<think> 内容，先于摘要提取处理
+        const extractedThinking = extractThinkingBlocks(fullResponse);
+        if (extractedThinking.thinking) {
+            const thinkingContent = extractedThinking.thinking;
             if (chat._cotDisplayMode !== 'hidden') {
             // 创建思考过程消息对象
             const thinkingMsg = {
@@ -271,7 +286,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             addMessageBubble(thinkingMsg, targetChatId, targetChatType);
             }
             // 从即将显示的文本中移除思考内容
-            fullResponse = fullResponse.replace(thinkingContent, "");
+            fullResponse = extractedThinking.content;
         }
 
         // 1.75 在思考内容移除后再提取拍一拍，避免误执行思维链中的示例。
