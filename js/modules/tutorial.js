@@ -590,6 +590,8 @@ function renderTutorialContent() {
 
     const backupDataBtn = createActionItem('button', '备份数据', 'btn btn-primary');
     backupDataBtn.disabled = loadingBtn;
+    const rescueExportLink = createActionItem('a', '救援导出（大数据／备份白屏）', 'btn btn-secondary');
+    rescueExportLink.href = './rescue-export.html';
 
     backupDataBtn.addEventListener('click', async () => {
         if(loadingBtn){
@@ -1565,6 +1567,7 @@ function renderTutorialContent() {
     });
 
     tutorialContentArea.appendChild(backupDataBtn);
+    tutorialContentArea.appendChild(rescueExportLink);
     tutorialContentArea.appendChild(partialExportBtn);
     tutorialContentArea.appendChild(importDataBtn);
 
@@ -1609,6 +1612,7 @@ function renderTutorialContent() {
     }
     if (isModern) {
         modernGroups.data.appendChild(backupDataBtn);
+        modernGroups.data.appendChild(rescueExportLink);
         modernGroups.data.appendChild(partialExportBtn);
         modernGroups.data.appendChild(importDataBtn);
         modernGroups.data.appendChild(importPartialDataBtn);
@@ -1620,6 +1624,7 @@ function renderTutorialContent() {
         modernGroups.clean.appendChild(clearDataBtn);
     } else {
         tutorialContentArea.appendChild(backupDataBtn);
+        tutorialContentArea.appendChild(rescueExportLink);
         tutorialContentArea.appendChild(partialExportBtn);
         tutorialContentArea.appendChild(importDataBtn);
         tutorialContentArea.appendChild(importPartialDataBtn);

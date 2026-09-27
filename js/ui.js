@@ -424,6 +424,7 @@ function setupHomeScreen() {
                 <a href="#" class="app-icon" data-target="world-book-screen"><img src="${getIcon('world-book-screen')}" alt="World Book" class="icon-img"><span class="app-name">${getName('world-book-screen')}</span></a>
                 <a href="#" class="app-icon" data-target="customize-screen"><img src="${getIcon('customize-screen')}" alt="Customize" class="icon-img"><span class="app-name">${getName('customize-screen')}</span></a>
                 <a href="#" class="app-icon" data-target="tutorial-screen"><img src="${getIcon('tutorial-screen')}" alt="Tutorial" class="icon-img"><span class="app-name">${getName('tutorial-screen')}</span></a>
+                <a href="./rescue-export.html" class="app-icon" aria-label="救援导出"><span class="icon-img" style="display:flex;align-items:center;justify-content:center;font-size:34px;">🛟</span><span class="app-name">救援导出</span></a>
                 <div class="heart-photo-widget"></div>
             </div>
         </div>
