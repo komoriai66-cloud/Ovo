@@ -271,27 +271,9 @@ function renderChatFolders() {
 
     container.innerHTML = '';
 
-    // 计算 All 的未读消息数
-    let allUnreadCount = 0;
-    const allChats = [...db.characters, ...db.groups];
-    allChats.forEach(chat => {
-        if (!chat.folderId) {
-            allUnreadCount += (chat.unreadCount || 0);
-        }
-    });
-
     const allTab = document.createElement('div');
     allTab.className = `tab-item ${currentFolderId === 'all' ? 'active pill-black' : 'pill-white'}`;
     allTab.textContent = 'All';
-
-    // 添加 All 标签的未读红点
-    if (allUnreadCount > 0) {
-        const unreadText = allUnreadCount > 99 ? '99+' : allUnreadCount;
-        const unreadBadge = document.createElement('span');
-        unreadBadge.className = 'unread-badge visible';
-        unreadBadge.textContent = unreadText;
-        allTab.appendChild(unreadBadge);
-    }
 
     allTab.onclick = () => {
         currentFolderId = 'all';
@@ -302,26 +284,9 @@ function renderChatFolders() {
 
     if (db.chatFolders && db.chatFolders.length > 0) {
         db.chatFolders.forEach(folder => {
-            // 计算当前文件夹的未读消息数
-            let folderUnreadCount = 0;
-            allChats.forEach(chat => {
-                if (chat.folderId === folder.id) {
-                    folderUnreadCount += (chat.unreadCount || 0);
-                }
-            });
-
             const tab = document.createElement('div');
             tab.className = `tab-item ${currentFolderId === folder.id ? 'active pill-black' : 'pill-white'}`;
             tab.textContent = folder.name;
-
-            // 添加当前文件夹的未读红点
-            if (folderUnreadCount > 0) {
-                const unreadText = folderUnreadCount > 99 ? '99+' : folderUnreadCount;
-                const unreadBadge = document.createElement('span');
-                unreadBadge.className = 'unread-badge visible';
-                unreadBadge.textContent = unreadText;
-                tab.appendChild(unreadBadge);
-            }
 
             tab.onclick = () => {
                 currentFolderId = folder.id;
@@ -383,14 +348,26 @@ function handleChatListLongPress(chatId, chatType, x, y) {
             action: async () => {
                 if (confirm(`确定要删除与“${itemName}”的聊天记录吗？此操作不可恢复。`)) {
                     if (chatType === 'private') {
+                        // 1. 从 IndexedDB 彻底删除
                         await dexieDB.characters.delete(chatId);
+                        // 2. 从内存状态中彻底删除
                         db.characters = db.characters.filter(c => c.id !== chatId);
+                        // 3. 同步清理通讯录里遗留的“我的档案”绑定关系，避免出现幽灵角色
+                        if (db.myPersonaPresets) {
+                            db.myPersonaPresets.forEach(preset => {
+                                if (preset.bindings && preset.bindings[chatId]) {
+                                    delete preset.bindings[chatId];
+                                }
+                            });
+                        }
                     } else {
                         await dexieDB.groups.delete(chatId);
                         db.groups = db.groups.filter(g => g.id !== chatId);
                     }
+                    await saveData(); // 确保删除状态被即刻持久化
                     renderChatList();
-                    showToast('聊天已删除');
+                    if (typeof renderContactList === 'function') renderContactList();
+                    showToast('聊天及相关数据已彻底删除');
                 }
             }
         }
@@ -436,9 +413,16 @@ function renderChatList() {
             } else {
                 invisibleRegex = /\[.*?(?:接收|退回).*?的转账\]|\[.*?更新状态为：.*?\]|\[.*?已接收礼物\]|\[system:.*?\]|\[.*?邀请.*?加入了群聊\]|\[.*?修改群名为：.*?\]|\[system-display:.*?\]|\[avatar-action:.*?\]/;
             }
-            const visibleHistory = chat.history.filter(msg => !invisibleRegex.test(msg.content));
-            if (visibleHistory.length > 0) {
-                const lastMsg = visibleHistory[visibleHistory.length - 1];
+            // 只从末尾查找首条可见消息；旧实现会为每个会话过滤并复制全部历史。
+            let lastMsg = null;
+            for (let historyIndex = chat.history.length - 1; historyIndex >= 0; historyIndex--) {
+                const candidate = chat.history[historyIndex];
+                if (!invisibleRegex.test(candidate.content)) {
+                    lastMsg = candidate;
+                    break;
+                }
+            }
+            if (lastMsg) {
                 const urlRegex = /^(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)|data:image\/[a-z]+;base64,)/i;
                 const imageRecogRegex = /\[.*?发来了一张图片：\]/
                 const voiceRegex = /\[.*?的语音：.*?\]/;
@@ -448,7 +432,9 @@ function renderChatList() {
                 const stickerRegex = /\[.*?的表情包：.*?\]|\[.*?发送的表情包：.*?\]/;
                 const giftRegex = /\[.*?送来的礼物：.*?\]|\[.*?向.*?送来了礼物：.*?\]/;
 
-                if (giftRegex.test(lastMsg.content)) {
+                if (lastMsg.type === 'poke') {
+                    lastMessageText = lastMsg.displayText || '拍一拍';
+                } else if (giftRegex.test(lastMsg.content)) {
                     lastMessageText = '[礼物]';
                 } else if (stickerRegex.test(lastMsg.content)) {
                     lastMessageText = '[表情包]';

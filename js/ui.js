@@ -27,10 +27,17 @@ const switchScreen = (targetId) => {
     if (targetId !== 'chat-room-screen' && typeof MinimaxTTSService !== 'undefined' && MinimaxTTSService.stop) {
         MinimaxTTSService.stop();
     }
-    // 离开聊天室时清理自定义样式
+    // 离开聊天室时清理自定义样式及全局状态
     if (targetId !== 'chat-room-screen') {
         const customStyles = document.querySelectorAll('style[id^="custom-bubble-style-for-"]');
         customStyles.forEach(style => style.remove());
+        
+        // 防止串线：仅在返回大厅类主页面时清空当前聊天目标ID，防止影响聊天设置页等二级页面
+        const mainScreens = ['chat-list-screen', 'contacts-screen', 'more-screen', 'phone-screen', 'home-screen', 'forum-screen', 'piggy-bank-screen'];
+        if (mainScreens.includes(targetId)) {
+            if (typeof currentChatId !== 'undefined') currentChatId = null;
+            if (typeof currentChatType !== 'undefined') currentChatType = null;
+        }
     } else {
         // 返回聊天室时重新应用样式
         if (typeof currentChatId !== 'undefined' && currentChatId) {
@@ -44,6 +51,7 @@ const switchScreen = (targetId) => {
     screens.forEach(screen => screen.classList.remove('active'));
     const targetScreen = document.getElementById(targetId);
     if (targetScreen) targetScreen.classList.add('active');
+    if (window.ReplyResilience) window.ReplyResilience.scheduleSessionSave();
     
     // 关闭所有覆盖层和侧边栏
     const overlays = document.querySelectorAll('.modal-overlay, .action-sheet-overlay, .settings-sidebar');
@@ -69,6 +77,8 @@ const switchScreen = (targetId) => {
                     item.classList.remove('active');
                 }
             });
+        } else if (targetId === 'world-book-detail-screen' || targetId === 'world-book-screen') {
+            globalNav.style.display = 'none';
         } else {
             globalNav.style.display = 'none';
         }
@@ -348,6 +358,10 @@ function updateBubbleCssPreview(previewContainer, css, useDefault, theme) {
 let currentPageIndex = 0;
 
 function setupHomeScreen() {
+    if (db.homeLayoutMode === 'free' && typeof renderFreeHomeScreen === 'function') {
+        renderFreeHomeScreen();
+        return;
+    }
     const getIcon = (id) => db.customIcons[id] || defaultIcons[id].url;
     const getName = (id) => (db.customAppNames && db.customAppNames[id]) || defaultIcons[id].name;
     if (!db.insWidgetSettings) {
@@ -448,12 +462,8 @@ function setupHomeScreen() {
                     <span class="app-name">${getName('appearance-settings-screen')}</span>
                 </a>
                 <a href="#" class="app-icon" data-action="biekan-app">
-                    <img src="${getIcon('biekan-app')}" alt="别看" class="icon-img">
+                    <img src="${getIcon('biekan-app')}" alt="MCP" class="icon-img">
                     <span class="app-name">${getName('biekan-app')}</span>
-                </a>
-                <a href="#" class="app-icon" data-action="xiaowu-app">
-                    <img src="${getIcon('xiaowu-app')}" alt="小屋" class="icon-img">
-                    <span class="app-name">${getName('xiaowu-app')}</span>
                 </a>
              </div>
         </div>
@@ -509,8 +519,7 @@ function setupHomeScreen() {
             };
         }
     });
-    document.querySelector('[data-action="biekan-app"]')?.addEventListener('click', (e) => { e.preventDefault(); showToast('别看APP正在开发中…'); });
-    document.querySelector('[data-action="xiaowu-app"]')?.addEventListener('click', (e) => { e.preventDefault(); showToast('小屋APP正在开发中…'); });
+    document.querySelector('[data-action="biekan-app"]')?.addEventListener('click', (e) => { e.preventDefault(); if (window.McpManager) window.McpManager.open(); });
     document.querySelector('[data-action="magic-room-app"]')?.addEventListener('click', (e) => { 
         e.preventDefault(); 
         if (typeof setupMagicRoomApp === 'function') setupMagicRoomApp();

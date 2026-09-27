@@ -1,4 +1,5 @@
 // --- 思维链(CoT)设置模块 ---
+const saveCotGlobalSettings = () => saveGlobalSettings(['cotSettings', 'cotPresets']);
 
 const DEFAULT_COT_ITEMS = [
     { id: 'cot_item_1', name: '引子', content: '[System Directive]:\n你必须严格遵守 [incipere] 协议。在回复前，请先进入 <thinking> 标签进行深度推演。\n请按以下步骤查阅 System Prompt 中的模块并思考：', enabled: true, locked: true },
@@ -68,7 +69,7 @@ function initCotSettings() {
                 db.cotSettings.offlineEnabled = e.target.checked;
             }
             
-            await saveData();
+            await saveCotGlobalSettings();
             showToast(e.target.checked ? '思维链已启用' : '思维链已禁用');
         });
     }
@@ -79,7 +80,7 @@ function initCotSettings() {
         humanRunSwitch.addEventListener('change', async (e) => {
             if (!db.cotSettings) db.cotSettings = { enabled: false, activePresetId: 'default' };
             db.cotSettings.humanRunEnabled = e.target.checked;
-            await saveData();
+            await saveCotGlobalSettings();
             showToast(e.target.checked ? '角色活人运转已启用' : '角色活人运转已禁用');
         });
     }
@@ -97,7 +98,7 @@ function initCotSettings() {
                 } else if (currentCotMode === 'offline') {
                     db.cotSettings.activeOfflinePresetId = presetId;
                 }
-                await saveData();
+                await saveCotGlobalSettings();
                 renderCotItems();
                 showToast('已切换预设');
             }
@@ -123,6 +124,23 @@ function initCotSettings() {
     document.getElementById('cot-item-edit-form').addEventListener('submit', saveCotItem);
     document.getElementById('cot-item-cancel-btn').addEventListener('click', () => {
         document.getElementById('cot-item-edit-modal').classList.remove('visible');
+    });
+    document.getElementById('cot-item-lock')?.addEventListener('change', updateCotItemLockState);
+
+    const advancedToggle = document.getElementById('cot-advanced-toggle');
+    advancedToggle?.addEventListener('click', () => {
+        const panel = document.getElementById('cot-advanced-options');
+        panel.hidden = !panel.hidden;
+        advancedToggle.textContent = panel.hidden ? '展开协议选项' : '收起协议选项';
+    });
+    document.getElementById('cot-save-policy-btn')?.addEventListener('click', saveCotModePolicy);
+    document.getElementById('cot-quick-reply-switch')?.addEventListener('change', async event => {
+        if (!db.apiSettings) db.apiSettings = {};
+        db.apiSettings.quickReplyEnabled = event.target.checked;
+        const original = document.getElementById('quick-reply-switch');
+        if (original) original.checked = event.target.checked;
+        await saveGlobalSettings(['apiSettings']);
+        showToast(event.target.checked ? '快速回复已启用' : '快速回复已关闭');
     });
 
     // 绑定预设管理模态框按钮
@@ -244,7 +262,7 @@ function loadCotSettings() {
             name: '默认思维链',
             items: JSON.parse(JSON.stringify(DEFAULT_COT_ITEMS))
         }];
-        saveData();
+        saveCotGlobalSettings();
     } else {
         // 检查并修复旧数据的锁定状态
         const defaultPreset = db.cotPresets.find(p => p.id === 'default');
@@ -256,7 +274,7 @@ function loadCotSettings() {
                     hasChanges = true;
                 }
             });
-            if (hasChanges) saveData();
+            if (hasChanges) saveCotGlobalSettings();
         }
     }
 
@@ -269,13 +287,13 @@ function loadCotSettings() {
             items: JSON.parse(JSON.stringify(DEFAULT_CALL_COT_ITEMS))
         };
         db.cotPresets.push(callPreset);
-        saveData();
+        saveCotGlobalSettings();
     }
 
     // 确保 activeCallPresetId 存在
     if (!db.cotSettings.activeCallPresetId) {
         db.cotSettings.activeCallPresetId = 'default_call';
-        saveData();
+        saveCotGlobalSettings();
     }
 
     // 确保线下预设存在
@@ -287,13 +305,13 @@ function loadCotSettings() {
             items: JSON.parse(JSON.stringify(DEFAULT_OFFLINE_COT_ITEMS))
         };
         db.cotPresets.push(offlinePreset);
-        saveData();
+        saveCotGlobalSettings();
     }
 
     // 确保 activeOfflinePresetId 存在
     if (!db.cotSettings.activeOfflinePresetId) {
         db.cotSettings.activeOfflinePresetId = 'default_offline';
-        saveData();
+        saveCotGlobalSettings();
     }
 
     // 根据当前模式设置开关状态
@@ -312,8 +330,51 @@ function loadCotSettings() {
         humanRunSwitch.checked = (db.cotSettings.humanRunEnabled !== undefined) ? db.cotSettings.humanRunEnabled : false;
     }
 
+    loadCotModePolicy();
+
     renderCotPresetSelect();
     renderCotItems();
+}
+
+const COT_POLICY_FIELDS = {
+    runMode: 'cot-run-mode', nativeEffort: 'cot-native-effort', nativeFailure: 'cot-native-failure', prefillMode: 'cot-prefill-mode',
+    triggerMode: 'cot-trigger-mode', triggerContent: 'cot-trigger-content', prefillContent: 'cot-prefill-content',
+    simulatedPrefillContent: 'cot-simulated-prefill-content', tagMode: 'cot-tag-mode', tagStart: 'cot-tag-start',
+    tagEnd: 'cot-tag-end', prefillFailure: 'cot-prefill-failure', displayMode: 'cot-display-mode'
+};
+
+function loadCotModePolicy() {
+    const policy = db.cotSettings?.modePolicies?.[currentCotMode] || {};
+    Object.entries(COT_POLICY_FIELDS).forEach(([key, id]) => {
+        const input = document.getElementById(id);
+        if (input) input.value = policy[key] || '';
+    });
+    const quick = document.getElementById('cot-quick-reply-switch');
+    if (quick) quick.checked = !!db.apiSettings?.quickReplyEnabled;
+    const status = document.getElementById('cot-policy-status');
+    if (status) status.textContent = policy.runMode ? '已加载当前场景设置' : '未选择时沿用原行为';
+}
+
+async function saveCotModePolicy() {
+    if (!db.cotSettings) db.cotSettings = { enabled: false, activePresetId: 'default' };
+    if (!db.cotSettings.modePolicies) db.cotSettings.modePolicies = {};
+    const policy = {};
+    Object.entries(COT_POLICY_FIELDS).forEach(([key, id]) => { policy[key] = document.getElementById(id)?.value || ''; });
+    if (!policy.runMode) return showToast('请先选择运行方式；不保存即继续沿用原行为');
+    if (!policy.nativeFailure) return showToast('请选择思考参数不兼容时的处理方式');
+    if ((policy.runMode === 'native' || policy.runMode === 'native_preset') && !policy.nativeEffort) return showToast('请选择原生思考程度');
+    if (policy.runMode !== 'direct' && !policy.prefillMode) return showToast('请选择回复预填方式');
+    if (policy.runMode !== 'direct' && !policy.displayMode) return showToast('请选择思考展示方式');
+    if ((policy.runMode === 'preset' || policy.runMode === 'native_preset' || policy.runMode === 'custom') && !policy.triggerMode) return showToast('请选择触发词行为');
+    if (policy.triggerMode === 'on' && !policy.triggerContent.trim()) return showToast('请填写触发词内容');
+    if (policy.prefillMode === 'real' && !policy.prefillContent.trim()) return showToast('请填写真实预填内容');
+    if (policy.prefillMode === 'simulated' && !policy.simulatedPrefillContent.trim()) return showToast('请填写模拟预填内容');
+    if (policy.tagMode === 'on' && (!policy.tagStart.trim() || !policy.tagEnd.trim())) return showToast('请填写完整的思考开始与结束标签');
+    if ((policy.prefillMode === 'real' || policy.prefillMode === 'simulated') && !policy.prefillFailure) return showToast('请选择预填不兼容时的处理方式');
+    db.cotSettings.modePolicies[currentCotMode] = policy;
+    await saveCotGlobalSettings();
+    const status = document.getElementById('cot-policy-status'); if (status) status.textContent = '已保存';
+    showToast('当前场景思维协议已保存');
 }
 
 // 渲染预设下拉框
@@ -350,7 +411,7 @@ function renderCotPresetSelect() {
             } else if (currentCotMode === 'offline') {
                 db.cotSettings.activeOfflinePresetId = activeId;
             }
-            saveData();
+            saveCotGlobalSettings();
         }
         select.value = activeId;
     }
@@ -389,7 +450,7 @@ function renderCotItems() {
         checkbox.checked = item.enabled;
         checkbox.addEventListener('change', async (e) => {
             item.enabled = e.target.checked;
-            await saveData();
+            await saveCotGlobalSettings();
         });
         const slider = document.createElement('span');
         slider.className = 'kkt-slider';
@@ -550,7 +611,7 @@ function renderCotItems() {
             const [movedItem] = items.splice(draggedCotItemIndex, 1);
             items.splice(targetIndex, 0, movedItem);
 
-            await saveData();
+            await saveCotGlobalSettings();
             renderCotItems();
         });
 
@@ -605,7 +666,7 @@ async function moveCotItem(index, direction) {
     activePreset.items[index] = activePreset.items[newIndex];
     activePreset.items[newIndex] = temp;
 
-    await saveData();
+    await saveCotGlobalSettings();
     renderCotItems();
 }
 
@@ -628,7 +689,7 @@ async function deleteCotItem(index) {
     if (!confirm('确定要删除这个条目吗？')) return;
 
     activePreset.items.splice(index, 1);
-    await saveData();
+    await saveCotGlobalSettings();
     renderCotItems();
 }
 
@@ -637,6 +698,8 @@ function openAddCotItemModal() {
     document.getElementById('cot-item-id').value = ''; // 空ID表示新建
     document.getElementById('cot-item-name').value = '';
     document.getElementById('cot-item-content').value = '';
+    document.getElementById('cot-item-editor-title').textContent = '添加思维条目';
+    setCotItemEditorValues(null);
     
     // 重置只读状态
     document.getElementById('cot-item-name').readOnly = false;
@@ -659,6 +722,8 @@ function openEditCotItemModal(item) {
     document.getElementById('cot-item-id').value = item.id;
     document.getElementById('cot-item-name').value = item.name;
     document.getElementById('cot-item-content').value = item.content;
+    document.getElementById('cot-item-editor-title').textContent = '编辑思维条目';
+    setCotItemEditorValues(item);
     
     const nameInput = document.getElementById('cot-item-name');
     const contentInput = document.getElementById('cot-item-content');
@@ -669,25 +734,9 @@ function openEditCotItemModal(item) {
     const existingNotice = document.querySelector('.cot-lock-notice');
     if (existingNotice) existingNotice.remove();
 
-    if (item.locked) {
-        // 锁定状态：只读
-        nameInput.readOnly = true;
-        contentInput.readOnly = true;
-        contentInput.classList.add('cot-readonly-textarea');
-        if (saveBtn) saveBtn.style.display = 'none';
-        
-        // 添加提示
-        const notice = document.createElement('div');
-        notice.className = 'cot-lock-notice';
-        notice.innerHTML = '🔒 此条目为核心规则，已被锁定，无法修改。';
-        form.insertBefore(notice, form.firstChild);
-    } else {
-        // 正常状态
-        nameInput.readOnly = false;
-        contentInput.readOnly = false;
-        contentInput.classList.remove('cot-readonly-textarea');
-        if (saveBtn) saveBtn.style.display = 'block';
-    }
+    // 锁定仍防止列表误改；进入编辑器后可由用户明确改为“允许编辑删除”。
+    if (saveBtn) saveBtn.style.display = 'block';
+    updateCotItemLockState();
 
     document.getElementById('cot-item-edit-modal').classList.add('visible');
 }
@@ -698,8 +747,10 @@ async function saveCotItem(e) {
     const id = document.getElementById('cot-item-id').value;
     const name = document.getElementById('cot-item-name').value.trim();
     const content = document.getElementById('cot-item-content').value;
+    const behavior = readCotItemBehavior();
 
     if (!name) return showToast('请输入条目名称');
+    if (!behavior) return;
 
     let activeId;
     if (currentCotMode === 'chat') {
@@ -716,9 +767,11 @@ async function saveCotItem(e) {
         // 编辑现有
         const item = activePreset.items.find(i => i.id === id);
         if (item) {
-            if (item.locked) return showToast('锁定条目无法修改');
             item.name = name;
             item.content = content;
+            item.enabled = behavior.status === 'enabled';
+            item.locked = behavior.lock === 'locked';
+            item.behavior = behavior;
         }
     } else {
         // 新建：插入到倒数第二个位置（即尾声之前），如果存在尾声的话
@@ -726,7 +779,9 @@ async function saveCotItem(e) {
             id: `cot_item_${Date.now()}`,
             name: name,
             content: content,
-            enabled: true
+            enabled: behavior.status === 'enabled',
+            locked: behavior.lock === 'locked',
+            behavior
         };
         
         // 查找最后一个锁定条目（通常是尾声）
@@ -741,10 +796,72 @@ async function saveCotItem(e) {
         }
     }
 
-    await saveData();
+    await saveCotGlobalSettings();
     document.getElementById('cot-item-edit-modal').classList.remove('visible');
     renderCotItems();
     showToast('条目已保存');
+}
+
+const COT_ITEM_SELECTS = {
+    status: 'cot-item-status', lock: 'cot-item-lock', type: 'cot-item-type', role: 'cot-item-role',
+    position: 'cot-item-position', nativeRelation: 'cot-item-native-relation', prefillEffect: 'cot-item-prefill-effect',
+    incompatible: 'cot-item-incompatible', outputTarget: 'cot-item-output', condition: 'cot-item-condition'
+};
+
+function renderCotItemNodeChoices(selected = []) {
+    const box = document.getElementById('cot-item-node-list');
+    if (!box) return;
+    box.replaceChildren();
+    const nodes = Array.isArray(db.apiNodes) ? db.apiNodes : [];
+    if (!nodes.length) {
+        const text = document.createElement('span'); text.className = 'cot-node-empty';
+        text.textContent = '暂无自定义节点，此条目不限制节点'; box.appendChild(text); return;
+    }
+    nodes.forEach(node => {
+        const label = document.createElement('label'); const input = document.createElement('input');
+        input.type = 'checkbox'; input.name = 'cot-item-node'; input.value = node.id; input.checked = selected.includes(node.id);
+        label.append(input, document.createTextNode(node.name)); box.appendChild(label);
+    });
+}
+
+function setCotItemEditorValues(item) {
+    const behavior = item?.behavior || {};
+    Object.entries(COT_ITEM_SELECTS).forEach(([key, id]) => {
+        const input = document.getElementById(id);
+        if (!input) return;
+        if (key === 'status') input.value = item ? (item.enabled === false ? 'disabled' : 'enabled') : '';
+        else if (key === 'lock') input.value = item ? (item.locked ? 'locked' : 'editable') : '';
+        else input.value = behavior[key] || '';
+    });
+    document.querySelectorAll('input[name="cot-item-scope"]').forEach(input => { input.checked = behavior.scopes?.includes(input.value) || false; });
+    document.getElementById('cot-item-condition-value').value = behavior.conditionValue || '';
+    renderCotItemNodeChoices(behavior.nodeIds || []);
+    const legacy = document.getElementById('cot-item-legacy-notice'); if (legacy) legacy.hidden = !item || !!item.behavior;
+}
+
+function readCotItemBehavior() {
+    const values = {};
+    for (const [key, id] of Object.entries(COT_ITEM_SELECTS)) {
+        values[key] = document.getElementById(id)?.value || '';
+        if (!values[key]) { showToast('请完成条目的所有选择项'); return null; }
+    }
+    values.scopes = Array.from(document.querySelectorAll('input[name="cot-item-scope"]:checked')).map(input => input.value);
+    if (!values.scopes.length) { showToast('请至少选择一个适用场景'); return null; }
+    values.nodeIds = Array.from(document.querySelectorAll('input[name="cot-item-node"]:checked')).map(input => input.value);
+    values.conditionValue = document.getElementById('cot-item-condition-value')?.value.trim() || '';
+    if (values.condition === 'custom' && !values.conditionValue) { showToast('请填写自定义触发条件'); return null; }
+    if (values.condition === 'custom') {
+        try { new RegExp(values.conditionValue, 'i'); } catch (_) { showToast('自定义条件不是有效的匹配表达式'); return null; }
+    }
+    if (values.outputTarget === 'xml' && !/^[A-Za-z][\w.-]*$/.test(values.conditionValue)) { showToast('输出到 XML 时，请在自定义条件/模型匹配框填写有效标签名'); return null; }
+    return values;
+}
+
+function updateCotItemLockState() {
+    const locked = document.getElementById('cot-item-lock')?.value === 'locked';
+    const name = document.getElementById('cot-item-name'); const content = document.getElementById('cot-item-content');
+    if (name) name.readOnly = locked; if (content) content.readOnly = locked;
+    content?.classList.toggle('cot-readonly-textarea', locked);
 }
 
 // 新建预设
@@ -781,7 +898,7 @@ async function createNewCotPreset() {
     } else if (currentCotMode === 'offline') {
         db.cotSettings.activeOfflinePresetId = newPreset.id;
     }
-    await saveData();
+    await saveCotGlobalSettings();
     
     loadCotSettings(); // 重新加载以更新下拉框和列表
     showToast('新预设已创建');
@@ -811,7 +928,7 @@ async function resetCotPreset() {
         activePreset.items = JSON.parse(JSON.stringify(DEFAULT_OFFLINE_COT_ITEMS));
     }
     
-    await saveData();
+    await saveCotGlobalSettings();
     renderCotItems();
     showToast('预设已重置为默认状态');
 }
@@ -843,7 +960,7 @@ function openCotPresetManageModal() {
             const newName = prompt('请输入新名称：', preset.name);
             if (newName) {
                 preset.name = newName;
-                await saveData();
+                await saveCotGlobalSettings();
                 openCotPresetManageModal(); // 刷新列表
                 renderCotPresetSelect(); // 刷新主界面下拉框
             }
@@ -878,7 +995,7 @@ function openCotPresetManageModal() {
                 db.cotSettings.activeOfflinePresetId = db.cotPresets[0].id;
             }
 
-            await saveData();
+            await saveCotGlobalSettings();
             openCotPresetManageModal();
             loadCotSettings();
         }, true);
@@ -920,7 +1037,8 @@ async function importCotPreset(e) {
         } else if (currentCotMode === 'offline') {
             db.cotSettings.activeOfflinePresetId = preset.id;
         }
-        await saveData();
+        await saveCotGlobalSettings();
+
         
         document.getElementById('cot-preset-manage-modal').classList.remove('visible');
         loadCotSettings();
@@ -936,3 +1054,158 @@ async function importCotPreset(e) {
 
 // 暴露给全局
 window.initCotSettings = initCotSettings;
+
+function cotItemConditionMatches(item, context, messages) {
+    const condition = item.behavior?.condition || 'always';
+    const serialized = JSON.stringify(messages || []);
+    if (condition === 'always') return true;
+    if (condition === 'has_image') return /image_url|inlineData|data:image\//i.test(serialized);
+    if (condition === 'has_quote') return /引用|quote|replyTo/i.test(serialized);
+    if (condition === 'long_text') {
+        const limit = Number(item.behavior?.conditionValue) || 500;
+        const latest = [...(messages || [])].reverse().find(message => message.role === 'user');
+        return JSON.stringify(latest?.content || '').length >= limit;
+    }
+    if (condition === 'tool_call') return /tool_calls|functionCall|functionResponse/i.test(serialized);
+    if (condition === 'custom') return !!item.behavior?.conditionValue && new RegExp(item.behavior.conditionValue, 'i').test(`${context.provider} ${context.model}`);
+    return false;
+}
+
+async function resolveCotPerRequestChoice(label, choices) {
+    const labels = {
+        on: '启用', off: '关闭', real: '真实 Assistant 预填', simulated: '提示词模拟预填',
+        hidden: '不显示', summary: '显示摘要', detail: '折叠显示详情', save_only: '保存但不显示',
+        retry_without: '移除预填后重试', retry_simulated: '改用模拟预填', error: '停止并显示错误',
+        lowest: '使用模型最低可用等级', provider_default: '使用模型默认'
+    };
+    return new Promise((resolve, reject) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay cot-choice-overlay';
+        overlay.style.display = 'flex';
+        const windowEl = document.createElement('div');
+        windowEl.className = 'modal-window cot-choice-window';
+        const title = document.createElement('h3'); title.textContent = `本次调用：${label}`;
+        const hint = document.createElement('p'); hint.textContent = '请选择本次请求的处理方式，不会替你自动决定。';
+        const actions = document.createElement('div'); actions.className = 'cot-choice-actions';
+        const finish = value => { overlay.remove(); if (value) resolve(value); else reject(new Error(`${label}未选择，本次调用已取消`)); };
+        choices.forEach(value => {
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-secondary';
+            button.textContent = labels[value] || value; button.addEventListener('click', () => finish(value)); actions.appendChild(button);
+        });
+        const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'btn btn-neutral'; cancel.textContent = '取消本次调用';
+        cancel.addEventListener('click', () => finish('')); actions.appendChild(cancel);
+        windowEl.append(title, hint, actions); overlay.appendChild(windowEl); document.body.appendChild(overlay);
+    });
+}
+
+async function applyConfiguredCotPolicy(originalMessages, context = {}) {
+    const policy = db.cotSettings?.modePolicies?.[context.mode];
+    if (!policy?.runMode) return { messages: originalMessages, nativeThinking: null, displayMode: '' };
+    if (!context.cotEnabled) return { messages: originalMessages, nativeThinking: null, displayMode: '' };
+    const messages = [...originalMessages];
+    const quick = !!context.quickReply;
+    const usesNative = policy.runMode === 'native' || policy.runMode === 'native_preset';
+    const usesPreset = policy.runMode === 'preset' || policy.runMode === 'native_preset' || policy.runMode === 'custom';
+    if (policy.runMode === 'direct') {
+        const nativeThinking = { enabled: false, incompatible: policy.nativeFailure || 'error' };
+        if (context.provider === 'gemini' && policy.nativeFailure === 'ask' && typeof getGeminiThinkingLevels === 'function') {
+            const supported = getGeminiThinkingLevels(context.model);
+            if (supported && !supported.includes('minimal')) {
+                nativeThinking.incompatible = await resolveCotPerRequestChoice(
+                    `${context.model || '当前 Gemini 模型'} 无法完全关闭原生思考`,
+                    ['lowest', 'provider_default', 'error']
+                );
+            }
+        }
+        return { messages, nativeThinking, displayMode: policy.displayMode || '', tagMode: policy.tagMode || '', tagStart: policy.tagStart || '', tagEnd: policy.tagEnd || '' };
+    }
+
+    let nativeThinking = usesNative ? { enabled: !quick, effort: policy.nativeEffort || 'auto' } : { enabled: false };
+    if (usesPreset && context.cotEnabled) {
+        const preset = (db.cotPresets || []).find(item => item.id === context.presetId);
+        const eligible = (preset?.items || []).filter(item => {
+            if (!item.enabled) return false;
+            const behavior = item.behavior;
+            if (behavior?.scopes?.length && !behavior.scopes.includes(context.scope) && !behavior.scopes.includes(context.mode)) return false;
+            if (behavior?.nodeIds?.length && !behavior.nodeIds.includes(context.nodeId)) return false;
+            if (behavior?.nativeRelation === 'native_on' && !usesNative) return false;
+            if (behavior?.nativeRelation === 'native_off' && usesNative) return false;
+            return cotItemConditionMatches(item, context, messages);
+        });
+        const positioned = { before_system: [], after_system: [], before_history: [], sequence: [], after_history: [], before_trigger: [], after_trigger: [], before_prefill: [], after_prefill: [] };
+        eligible.forEach(item => {
+            const behavior = item.behavior || {};
+            if (behavior.prefillEffect === 'disable_real' && policy.prefillMode === 'real') return;
+            if (behavior.prefillEffect === 'disable_simulated' && policy.prefillMode === 'simulated') return;
+            let role = behavior.role || 'system';
+            if (role === 'inherit') {
+                if (behavior.type === 'developer') role = 'developer';
+                else if (behavior.type === 'trigger' || behavior.type === 'simulated_prefill') role = 'user';
+                else if (behavior.type === 'assistant_prefill') role = 'assistant';
+                else role = 'system';
+            }
+            if (role === 'per_provider') {
+                if (behavior.incompatible === 'skip') return;
+                if (behavior.incompatible === 'error') throw new Error(`条目“${item.name}”尚未配置当前模型的发送身份`);
+                role = behavior.incompatible === 'user' || behavior.incompatible === 'simulate' ? 'user' : 'system';
+            }
+            if (behavior.prefillEffect === 'enable_real') role = 'assistant';
+            if (behavior.prefillEffect === 'enable_simulated') role = 'user';
+            let entryContent = behavior.incompatible === 'simulate' || behavior.prefillEffect === 'enable_simulated' ? `请在内部遵循以下预填要求：\n${item.content}` : item.content;
+            if (behavior.outputTarget === 'thinking') entryContent = `以下规则只作用于思考区域：\n${entryContent}`;
+            else if (behavior.outputTarget === 'answer') entryContent = `以下规则必须落实到最终回复：\n${entryContent}`;
+            else if (behavior.outputTarget === 'xml' && behavior.conditionValue) entryContent = `请将对应输出放入 <${behavior.conditionValue}> 标签：\n${entryContent}`;
+            const entry = { role, content: entryContent };
+            (positioned[behavior.position] || positioned.sequence).push(entry);
+        });
+        const systemIndex = messages.findIndex(message => message.role === 'system');
+        messages.splice(systemIndex < 0 ? 0 : systemIndex, 0, ...positioned.before_system);
+        const lastSystem = messages.reduce((found, message, index) => message.role === 'system' ? index : found, -1);
+        messages.splice(lastSystem + 1, 0, ...positioned.after_system, ...positioned.before_history);
+        messages.push(...positioned.sequence, ...positioned.after_history, ...positioned.before_trigger);
+        if (policy.tagMode === 'on') messages.push({ role: 'system', content: `思考内容必须使用 ${policy.tagStart} 与 ${policy.tagEnd} 包裹。` });
+        else if (policy.tagMode === 'off') messages.push({ role: 'system', content: '不要在最终回复中输出思考标签或思考过程。' });
+
+        let triggerMode = policy.triggerMode;
+        if (triggerMode === 'ask') triggerMode = await resolveCotPerRequestChoice('触发词', ['on', 'off']);
+        if (triggerMode === 'on') messages.push({ role: 'user', content: policy.triggerContent });
+        messages.push(...positioned.after_trigger, ...positioned.before_prefill);
+
+        let prefillMode = policy.prefillMode;
+        if (prefillMode === 'ask') prefillMode = await resolveCotPerRequestChoice('回复预填', ['real', 'simulated', 'off']);
+        if (quick || prefillMode === 'legacy_quick') {
+            messages.push({ role: 'assistant', content: '<thinking>\n跳过cot，专注回复\n</thinking>\n[finire]' });
+            nativeThinking = { enabled: false };
+        } else if (prefillMode === 'real') {
+            messages.push({ role: 'assistant', content: policy.prefillContent });
+        } else if (prefillMode === 'simulated') {
+            messages.push({ role: 'user', content: policy.simulatedPrefillContent });
+        }
+        messages.push(...positioned.after_prefill);
+    }
+    if (!usesPreset) {
+        let prefillMode = policy.prefillMode;
+        if (prefillMode === 'ask') prefillMode = await resolveCotPerRequestChoice('回复预填', ['real', 'simulated', 'off']);
+        if (quick || prefillMode === 'legacy_quick') {
+            messages.push({ role: 'assistant', content: '<thinking>\n跳过cot，专注回复\n</thinking>\n[finire]' });
+            nativeThinking = { enabled: false };
+        } else if (prefillMode === 'real') messages.push({ role: 'assistant', content: policy.prefillContent });
+        else if (prefillMode === 'simulated') messages.push({ role: 'user', content: policy.simulatedPrefillContent });
+    }
+    nativeThinking.incompatible = policy.nativeFailure || 'error';
+    if (context.provider === 'gemini' && policy.nativeFailure === 'ask' && typeof getGeminiThinkingLevels === 'function') {
+        const supported = getGeminiThinkingLevels(context.model);
+        const requested = nativeThinking.enabled ? nativeThinking.effort : 'minimal';
+        if (supported && requested !== 'auto' && !supported.includes(requested)) {
+            nativeThinking.incompatible = await resolveCotPerRequestChoice(
+                `${context.model || '当前 Gemini 模型'} 不支持“${requested}”思考等级`,
+                ['lowest', 'provider_default', 'error']
+            );
+        }
+    }
+    let displayMode = policy.displayMode || '';
+    if (displayMode === 'ask') displayMode = await resolveCotPerRequestChoice('思考展示', ['hidden', 'summary', 'detail', 'save_only']);
+    return { messages, nativeThinking, displayMode, prefillFailure: policy.prefillFailure || '', simulatedPrefillContent: policy.simulatedPrefillContent || '', tagMode: policy.tagMode || '', tagStart: policy.tagStart || '', tagEnd: policy.tagEnd || '' };
+}
+
+window.applyConfiguredCotPolicy = applyConfiguredCotPolicy;

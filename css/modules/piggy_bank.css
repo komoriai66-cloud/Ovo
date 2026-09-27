@@ -275,6 +275,35 @@
     color: #333;
     margin: 0;
 }
+.family-card-display-setting {
+    margin: 10px 16px 4px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    color: #555;
+}
+.family-card-display-setting label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.family-card-display-setting select {
+    flex: 0 1 112px;
+    min-width: 0;
+    max-width: 112px;
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    padding: 5px 24px 5px 8px;
+    background: #fafafa;
+    color: #555;
+    font-size: 12px;
+}
 .family-card-scroll-list {
     display: flex;
     gap: 12px;

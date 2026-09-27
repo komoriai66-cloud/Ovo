@@ -1,13 +1,32 @@
 /* --- 世界书 (World Book) 样式 --- */
 
 #world-book-screen, 
-#edit-world-book-screen {
+#edit-world-book-screen,
+#world-book-detail-screen {
     background-color: transparent;
 }
 
+#world-book-search-bar,
+#world-book-detail-search-bar {
+    background: #ffffff !important;
+}
+
+#world-book-search-bar .search-input-wrapper,
+#world-book-detail-search-bar .search-input-wrapper {
+    background-color: #ffffff !important;
+}
+
 #chat-list-screen .content,
-#world-book-screen .content {
+#world-book-screen .content,
+#world-book-detail-screen .content {
     padding: 10px 0 80px 0;
+}
+
+.world-book-folder-header {
+    transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+.world-book-folder-header:active {
+    transform: scale(0.98);
 }
 
 /* 世界书列表项 */
@@ -65,6 +84,57 @@
     flex-grow: 1;
 }
 
+.world-book-item {
+    display: flex;
+    align-items: flex-start;
+    padding: 12px;
+    cursor: pointer;
+    border: 1px solid #f0f0f0;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+    position: relative;
+    background-color: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+}
+
+.world-book-item:last-child {
+    margin-bottom: 0;
+}
+
+.world-book-item:hover {
+    background-color: #fdf6f8;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+.world-book-item .item-details {
+    width: 100%;
+}
+
+.world-book-item .item-preview {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.5;
+    background: #fafafa;
+    padding: 10px;
+    border-radius: 8px;
+    margin-top: 8px;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.world-book-item-actions {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .world-book-category-header .category-arrow {
     font-size: 12px;
     transition: transform 0.3s ease;
@@ -88,26 +158,6 @@
     max-height: 5000px;
     padding-bottom: 10px;
     overflow-y: auto;
-}
-
-/* 世界书条目 */
-.world-book-item {
-    display: flex;
-    align-items: center;
-    padding: 10px 20px;
-    cursor: pointer;
-    border-bottom: 1px solid #f0f0f0;
-    transition: background-color 0.2s ease;
-    position: relative;
-    background-color: #fff;
-}
-
-.world-book-item:last-child {
-    border-bottom: none;
-}
-
-.world-book-item:hover {
-    background-color: #fdf6f8;
 }
 
 .world-book-item.is-selecting {

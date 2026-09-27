@@ -22,6 +22,32 @@
     font-size: 12px;
 }
 
+.vector-memory-health {
+    margin-top: 6px;
+    max-width: 100%;
+    color: #7d719d;
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.vector-memory-health.is-ok {
+    color: #397a58;
+}
+
+.vector-memory-health.is-warning {
+    color: #a56a12;
+}
+
+.vector-api-actions {
+    flex-wrap: wrap;
+}
+
+.vector-api-actions > .btn {
+    flex: 1 1 132px !important;
+    white-space: nowrap;
+}
+
 .vector-memory-auto-box {
     margin-top: 12px;
     padding: 12px;
@@ -110,4 +136,31 @@
     align-items: center;
     color: #444;
     font-size: 14px;
+}
+
+@media (max-width: 390px) {
+    .vector-memory-panel {
+        padding: 12px;
+    }
+
+    .vector-memory-card {
+        padding: 12px;
+        border-radius: 16px;
+    }
+
+    .vector-memory-card-head,
+    .vector-memory-panel-head,
+    .vector-memory-auto-row {
+        min-width: 0;
+    }
+
+    .vector-memory-card-head > div:first-child,
+    .vector-memory-panel-head > div:first-child {
+        min-width: 0;
+        flex: 1 1 100%;
+    }
+
+    .vector-memory-card-actions {
+        gap: 6px;
+    }
 }

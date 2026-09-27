@@ -1,12 +1,15 @@
 (function () {
+    const Core = window.VectorMemoryCore;
     const VECTOR_MEMORY_DEFAULT_INTERVAL = 200;
     const VECTOR_MEMORY_DEFAULT_TOP_K = 5;
     const VECTOR_MEMORY_DEFAULT_THRESHOLD = 0.28;
     const VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH = 1200;
     const uiState = {
         tab: 'entries',
-        editingTemplateId: null
+        editingTemplateId: null,
+        reindexing: false
     };
+    const runtimeHealth = new Map();
 
     function createVectorId(prefix) {
         return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -91,6 +94,9 @@
         if (!Array.isArray(state.lastRetrievedEntryIds)) state.lastRetrievedEntryIds = [];
         if (state.lastQueryText === undefined) state.lastQueryText = '';
         if (state.lastPreparedAt === undefined) state.lastPreparedAt = null;
+        if (state.lastRetrievalMode === undefined) state.lastRetrievalMode = '';
+        if (state.lastCacheKey === undefined) state.lastCacheKey = '';
+        if (state.entriesRevision === undefined) state.entriesRevision = 0;
         if (!state.boundTemplateId || !db.vectorMemoryTemplates.some(item => item.id === state.boundTemplateId)) {
             state.boundTemplateId = db.vectorMemoryTemplates[0] ? db.vectorMemoryTemplates[0].id : null;
         }
@@ -103,6 +109,10 @@
             if (!Number.isFinite(parseFloat(entry.weight))) entry.weight = 1;
             if (entry.createdAt === undefined) entry.createdAt = Date.now();
             if (entry.updatedAt === undefined) entry.updatedAt = entry.createdAt;
+            if (entry.embeddingStatus === undefined) entry.embeddingStatus = 'pending';
+            if (entry.embeddingProfileKey === undefined) entry.embeddingProfileKey = '';
+            if (entry.embeddingDimensions === undefined) entry.embeddingDimensions = entry.vector.length || 0;
+            if (entry.contentHash === undefined) entry.contentHash = Core ? Core.stableHash(entry.text || '') : '';
         });
     }
 
@@ -121,23 +131,23 @@
     }
 
     function getSummaryApiConfig() {
-        const apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
+        let apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
             ? db.summaryApiSettings
             : db.apiSettings;
-        if (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model) {
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig) : apiConfig;
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model)) {
             throw new Error('请先配置总结 API');
         }
         return apiConfig;
     }
 
     function getVectorApiConfig() {
-        const apiConfig = (db.vectorApiSettings && db.vectorApiSettings.url && db.vectorApiSettings.key && db.vectorApiSettings.model)
-            ? db.vectorApiSettings
-            : ((db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
-                ? db.summaryApiSettings
-                : db.apiSettings);
-        if (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model) {
-            throw new Error('请先配置向量 API');
+        const apiConfig = db.vectorApiSettings;
+        const keyRequired = !['ollama', 'openai-noauth'].includes(apiConfig?.provider);
+        if (!apiConfig || !apiConfig.url || !apiConfig.model || (keyRequired && !apiConfig.key)) {
+            const error = new Error('请先配置并测试向量 API；总结 API 和主 API 不会被当作 Embedding 模型');
+            error.code = 'VECTOR_CONFIG_MISSING';
+            throw error;
         }
         return apiConfig;
     }
@@ -169,16 +179,39 @@
         return fetchAiResponse(apiConfig, requestBody, headers, endpoint);
     }
 
-    async function fetchEmbeddingBatch(texts) {
-        const apiConfig = getVectorApiConfig();
+    async function fetchVectorResponse(endpoint, options) {
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+            try {
+                const response = await fetch(endpoint, { ...options, signal: controller.signal });
+                if (response.ok || ![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) return response;
+                lastError = new Error(`Embedding API 暂时不可用：HTTP ${response.status}`);
+            } catch (error) {
+                lastError = error?.name === 'AbortError'
+                    ? new Error('Embedding API 请求超时')
+                    : (error instanceof TypeError ? new Error('无法连接 Embedding API，请检查地址、网络和服务端 CORS 设置') : error);
+                if (attempt === 2) throw lastError;
+            } finally {
+                clearTimeout(timeoutId);
+            }
+            await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+        throw lastError || new Error('Embedding API 请求失败');
+    }
+
+    async function fetchEmbeddingBatch(texts, overrideConfig) {
+        const apiConfig = overrideConfig || getVectorApiConfig();
         let { url, key, model } = apiConfig;
         const provider = apiConfig.provider || 'newapi';
-        url = (url || '').replace(/\/$/, '');
+        url = Core ? Core.normalizeBaseUrl(url) : (url || '').replace(/\/$/, '');
         if (provider === 'gemini') {
             const outputs = [];
             for (const text of texts) {
-                const endpoint = `${url}/v1beta/models/${model}:embedContent?key=${getRandomValue(key)}`;
-                const response = await fetch(endpoint, {
+                const endpointBase = Core ? Core.buildVectorEndpoint(apiConfig, 'embeddings') : `${url}/v1beta/models/${model}:embedContent`;
+                const endpoint = `${endpointBase}${endpointBase.includes('?') ? '&' : '?'}key=${getRandomValue(key)}`;
+                const response = await fetchVectorResponse(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -188,20 +221,38 @@
                     })
                 });
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`Embedding API Error: ${response.status} ${errorText}`);
+                    const errorText = (await response.text()).slice(0, 500);
+                    const error = new Error(`Embedding API Error: ${response.status} ${errorText}`);
+                    error.status = response.status;
+                    throw error;
                 }
                 const data = await response.json();
-                outputs.push(data.embedding?.values || []);
+                const parsed = Core ? Core.parseEmbeddingResponse(provider, data, 1) : [data.embedding?.values || []];
+                outputs.push(parsed[0]);
             }
             return outputs;
         }
 
-        const endpoint = `${url}/v1/embeddings`;
-        const headers = {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${key}`
-        };
+        if (provider === 'ollama') {
+            const endpoint = Core ? Core.buildVectorEndpoint(apiConfig, 'embeddings') : `${url}/api/embed`;
+            const response = await fetchVectorResponse(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model, input: texts })
+            });
+            if (!response.ok) {
+                const errorText = (await response.text()).slice(0, 500);
+                const error = new Error(`Embedding API Error: ${response.status} ${errorText}`);
+                error.status = response.status;
+                throw error;
+            }
+            const data = await response.json();
+            return Core ? Core.parseEmbeddingResponse(provider, data, texts.length) : (data.embeddings || []);
+        }
+
+        const endpoint = Core ? Core.buildVectorEndpoint(apiConfig, 'embeddings') : `${url}/v1/embeddings`;
+        const headers = { 'Content-Type': 'application/json' };
+        if (provider !== 'openai-noauth') headers.Authorization = `Bearer ${getRandomValue(key)}`;
         const body = {
             model,
             input: texts.length === 1 ? texts[0] : texts
@@ -209,31 +260,60 @@
         if (Number.isFinite(parseInt(apiConfig.dimensions, 10))) {
             body.dimensions = parseInt(apiConfig.dimensions, 10);
         }
-        const response = await fetch(endpoint, {
+        const response = await fetchVectorResponse(endpoint, {
             method: 'POST',
             headers,
             body: JSON.stringify(body)
         });
         if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Embedding API Error: ${response.status} ${errorText}`);
+            const errorText = (await response.text()).slice(0, 500);
+            const error = new Error(`Embedding API Error: ${response.status} ${errorText}`);
+            error.status = response.status;
+            throw error;
         }
         const data = await response.json();
+        if (Core) return Core.parseEmbeddingResponse(provider, data, texts.length);
         const list = Array.isArray(data.data) ? data.data : [];
         return list.map(item => item.embedding || []);
     }
 
-    async function fetchEmbeddings(texts) {
+    async function fetchEmbeddings(texts, overrideConfig) {
         const list = (Array.isArray(texts) ? texts : [texts]).map(item => (item || '').trim()).filter(Boolean);
         if (list.length === 0) return [];
         const batchSize = Math.max(1, parseInt((db.vectorApiSettings && db.vectorApiSettings.batchSize) || 8, 10) || 8);
         const outputs = [];
         for (let index = 0; index < list.length; index += batchSize) {
             const batch = list.slice(index, index + batchSize);
-            const vectors = await fetchEmbeddingBatch(batch);
-            outputs.push(...vectors);
+            try {
+                const vectors = await fetchEmbeddingBatch(batch, overrideConfig);
+                outputs.push(...vectors);
+            } catch (error) {
+                if (batch.length <= 1 || ![400, 413, 422].includes(error.status)) throw error;
+                for (const text of batch) {
+                    const vectors = await fetchEmbeddingBatch([text], overrideConfig);
+                    outputs.push(vectors[0]);
+                }
+            }
         }
         return outputs;
+    }
+
+    function getEmbeddingProfileKey(vectorLength, config) {
+        const apiConfig = config || getVectorApiConfig();
+        return Core ? Core.createProfileKey(apiConfig, vectorLength) : `${apiConfig.provider || 'newapi'}|${apiConfig.url}|${apiConfig.model}|${vectorLength}`;
+    }
+
+    async function testVectorApiConfiguration(config) {
+        const startedAt = performance.now();
+        const vectors = await fetchEmbeddings(['OVO 向量连接测试'], config);
+        const vector = vectors[0];
+        if (!Array.isArray(vector) || !vector.length) throw new Error('测试返回了空向量');
+        const result = {
+            dimensions: vector.length,
+            latencyMs: Math.max(1, Math.round(performance.now() - startedAt)),
+            profileKey: getEmbeddingProfileKey(vector.length, config)
+        };
+        return result;
     }
 
     function cosineSimilarity(a, b) {
@@ -319,7 +399,8 @@
                 `来源：${entry.source || 'manual'}`
             ];
             if (entry._score !== undefined) {
-                parts.push(`相似度：${entry._score.toFixed(3)}`);
+                if (entry._semanticScore > 0) parts.push(`语义相似度：${entry._semanticScore.toFixed(3)}`);
+                parts.push(`${entry._retrievalMode === 'lexical' ? '关键词得分' : '综合得分'}：${entry._score.toFixed(3)}`);
             }
             if (entry.rangeLabel) {
                 parts.push(`范围：${entry.rangeLabel}`);
@@ -349,6 +430,10 @@
 
     function computeLexicalScore(entry, queryText) {
         const haystack = `${entry.title || ''}\n${entry.text || ''}\n${getEntryTags(entry)}`.toLowerCase();
+        if (Core) {
+            const base = Core.lexicalSimilarity(haystack, queryText);
+            return Math.min(1, base + (entry.pinned ? 0.2 : 0) + Math.max(0, (Number(entry.weight) || 1) - 1) * 0.06);
+        }
         const tokens = String(queryText || '')
             .toLowerCase()
             .split(/[\s,，。！？!?:：、;；\n]+/)
@@ -368,11 +453,14 @@
         const topK = Math.max(1, parseInt(template?.topK || chat.vectorMemory.topK, 10) || VECTOR_MEMORY_DEFAULT_TOP_K);
         const threshold = Number.isFinite(parseFloat(template?.similarityThreshold))
             ? parseFloat(template.similarityThreshold)
-            : parseFloat(chat.vectorMemory.threshold || VECTOR_MEMORY_DEFAULT_THRESHOLD);
+            : (Number.isFinite(parseFloat(chat.vectorMemory.threshold)) ? parseFloat(chat.vectorMemory.threshold) : VECTOR_MEMORY_DEFAULT_THRESHOLD);
         return [...chat.vectorMemory.entries]
             .map(entry => ({
                 ...entry,
                 _score: computeLexicalScore(entry, queryText),
+                _semanticScore: 0,
+                _lexicalScore: computeLexicalScore(entry, queryText),
+                _retrievalMode: 'lexical',
                 rangeLabel: entry.range ? `${entry.range.start}-${entry.range.end}` : ''
             }))
             .filter(entry => entry.pinned || entry._score >= Math.max(0.05, threshold * 0.45))
@@ -390,21 +478,44 @@
         chat.vectorMemory.lastRetrievedEntryIds = [];
         chat.vectorMemory.lastQueryText = '';
         chat.vectorMemory.lastPreparedAt = null;
+        chat.vectorMemory.lastRetrievalMode = '';
+        chat.vectorMemory.lastCacheKey = '';
+        chat.vectorMemory.entriesRevision = (chat.vectorMemory.entriesRevision || 0) + 1;
+    }
+
+    function getVectorCacheKey(chat, queryText) {
+        const template = getActiveVectorTemplate(chat);
+        let profile = 'unconfigured';
+        try {
+            const config = getVectorApiConfig();
+            profile = Core ? Core.createProfileKey(config, config.health?.dimensions || config.dimensions || 0) : `${config.url}|${config.model}`;
+        } catch (_) { /* lexical-only cache */ }
+        const templateRevision = Core ? Core.stableHash(JSON.stringify(template || {})) : JSON.stringify(template || {});
+        const raw = [queryText, profile, chat.vectorMemory.entriesRevision || 0, templateRevision].join('|');
+        return Core ? Core.stableHash(raw) : raw;
     }
 
     function getVectorMemoryContextBlock(chat, options = {}) {
         ensureVectorMemoryState(chat);
         if (chat.memoryMode !== 'vector' && !options.force) return '';
-        if (chat.vectorMemory.lastContextBlock) {
+        const queryText = options.queryText || buildVectorQueryText(chat);
+        const cacheKey = getVectorCacheKey(chat, queryText);
+        if (chat.vectorMemory.lastContextBlock && chat.vectorMemory.lastCacheKey === cacheKey) {
             return chat.vectorMemory.lastContextBlock;
         }
-        const queryText = options.queryText || buildVectorQueryText(chat);
         const entries = selectFallbackEntries(chat, queryText);
         const block = buildContextBlock(chat, entries, queryText);
         chat.vectorMemory.lastContextBlock = block;
         chat.vectorMemory.lastRetrievedEntryIds = entries.map(item => item.id);
         chat.vectorMemory.lastQueryText = queryText;
         chat.vectorMemory.lastPreparedAt = Date.now();
+        chat.vectorMemory.lastCacheKey = cacheKey;
+        chat.vectorMemory.lastRetrievalMode = 'lexical';
+        runtimeHealth.set(chat.id, {
+            mode: 'lexical',
+            message: '当前使用中文关键词检索；发送普通文字消息时会尝试语义检索',
+            updatedAt: Date.now()
+        });
         return block;
     }
 
@@ -415,7 +526,10 @@
             clearVectorContextCache(chat);
             return '';
         }
-        if (chat.vectorMemory.lastContextBlock && chat.vectorMemory.lastQueryText === queryText) {
+        let cacheKey = getVectorCacheKey(chat, queryText);
+        if (chat.vectorMemory.lastContextBlock
+            && chat.vectorMemory.lastCacheKey === cacheKey
+            && chat.vectorMemory.lastRetrievalMode === 'semantic') {
             return chat.vectorMemory.lastContextBlock;
         }
 
@@ -423,33 +537,89 @@
         const topK = Math.max(1, parseInt(template?.topK || chat.vectorMemory.topK, 10) || VECTOR_MEMORY_DEFAULT_TOP_K);
         const threshold = Number.isFinite(parseFloat(template?.similarityThreshold))
             ? parseFloat(template.similarityThreshold)
-            : parseFloat(chat.vectorMemory.threshold || VECTOR_MEMORY_DEFAULT_THRESHOLD);
+            : (Number.isFinite(parseFloat(chat.vectorMemory.threshold)) ? parseFloat(chat.vectorMemory.threshold) : VECTOR_MEMORY_DEFAULT_THRESHOLD);
 
         let selectedEntries = [];
         try {
+            const pendingEntries = chat.vectorMemory.entries
+                .filter(entry => entry.embeddingStatus === 'pending' || entry.embeddingStatus === 'failed' || entry.embeddingStatus === 'legacy' || !entry.vector?.length)
+                .slice(0, 8);
+            if (pendingEntries.length) {
+                await embedEntriesIfNeeded(pendingEntries);
+                clearVectorContextCache(chat);
+                cacheKey = getVectorCacheKey(chat, queryText);
+                await saveCharacter(chat.id);
+            }
             const vectors = await fetchEmbeddings([queryText]);
             const queryVector = vectors[0];
             if (Array.isArray(queryVector) && queryVector.length > 0) {
+                const profileKey = getEmbeddingProfileKey(queryVector.length);
+                const activeConfig = getVectorApiConfig();
+                if (activeConfig.health?.dimensions !== queryVector.length || activeConfig.health?.profileKey !== profileKey) {
+                    activeConfig.health = {
+                        status: 'healthy',
+                        dimensions: queryVector.length,
+                        profileKey,
+                        testedAt: Date.now()
+                    };
+                    if (typeof saveGlobalSettings === 'function') await saveGlobalSettings(['vectorApiSettings']);
+                    cacheKey = getVectorCacheKey(chat, queryText);
+                }
+                const incompatibleEntries = chat.vectorMemory.entries
+                    .filter(entry => entry.embeddingProfileKey !== profileKey)
+                    .slice(0, 8);
+                if (incompatibleEntries.length) {
+                    incompatibleEntries.forEach(entry => { entry.embeddingStatus = 'pending'; });
+                    await embedEntriesIfNeeded(incompatibleEntries);
+                    clearVectorContextCache(chat);
+                    cacheKey = getVectorCacheKey(chat, queryText);
+                    await saveCharacter(chat.id);
+                }
                 selectedEntries = chat.vectorMemory.entries
                     .map(entry => {
-                        const similarity = cosineSimilarity(queryVector, entry.vector);
-                        const score = similarity + (entry.pinned ? 0.35 : 0) + ((Number(entry.weight) || 1) - 1) * 0.08;
+                        const dimensionMatches = Array.isArray(entry.vector) && entry.vector.length === queryVector.length;
+                        const profileMatches = entry.embeddingProfileKey === profileKey;
+                        const similarity = dimensionMatches && profileMatches
+                            ? cosineSimilarity(queryVector, entry.vector)
+                            : 0;
+                        const lexical = computeLexicalScore(entry, queryText);
+                        const score = similarity > 0
+                            ? similarity * 0.88 + lexical * 0.12 + (entry.pinned ? 0.12 : 0) + ((Number(entry.weight) || 1) - 1) * 0.05
+                            : lexical;
                         return {
                             ...entry,
                             _score: score,
+                            _semanticScore: similarity,
+                            _lexicalScore: lexical,
+                            _retrievalMode: similarity > 0 ? 'hybrid' : 'lexical',
                             rangeLabel: entry.range ? `${entry.range.start}-${entry.range.end}` : ''
                         };
                     })
-                    .filter(entry => entry.pinned || entry._score >= threshold)
+                    .filter(entry => entry.pinned
+                        || entry._semanticScore >= threshold
+                        || (entry._semanticScore === 0 && entry._lexicalScore >= Math.max(0.05, threshold * 0.45)))
                     .sort((a, b) => {
                         if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
                         if (b._score !== a._score) return b._score - a._score;
                         return (b.updatedAt || 0) - (a.updatedAt || 0);
                     })
                     .slice(0, topK);
+                runtimeHealth.set(chat.id, {
+                    mode: 'semantic',
+                    message: `语义检索正常 · ${queryVector.length} 维`,
+                    dimensions: queryVector.length,
+                    profileKey,
+                    updatedAt: Date.now()
+                });
             }
         } catch (error) {
             console.warn('[VectorMemory] prepare context fallback:', error);
+            runtimeHealth.set(chat.id, {
+                mode: 'degraded',
+                message: error.message || 'Embedding 请求失败，已使用关键词检索',
+                code: error.code || 'EMBEDDING_FAILED',
+                updatedAt: Date.now()
+            });
         }
 
         if (selectedEntries.length === 0) {
@@ -460,16 +630,31 @@
         chat.vectorMemory.lastRetrievedEntryIds = selectedEntries.map(item => item.id);
         chat.vectorMemory.lastQueryText = queryText;
         chat.vectorMemory.lastPreparedAt = Date.now();
+        chat.vectorMemory.lastCacheKey = cacheKey;
+        chat.vectorMemory.lastRetrievalMode = runtimeHealth.get(chat.id)?.mode === 'semantic' ? 'semantic' : 'degraded';
         return block;
     }
 
     async function embedEntriesIfNeeded(entries) {
-        const targets = entries.filter(item => !Array.isArray(item.vector) || item.vector.length === 0);
+        const config = getVectorApiConfig();
+        const knownDimensions = Number(config.health?.dimensions || config.dimensions || 0);
+        const expectedProfileKey = knownDimensions ? getEmbeddingProfileKey(knownDimensions, config) : '';
+        const targets = entries.filter(item => !Array.isArray(item.vector)
+            || item.vector.length === 0
+            || item.embeddingStatus === 'pending'
+            || item.embeddingStatus === 'failed'
+            || item.embeddingStatus === 'legacy'
+            || (expectedProfileKey && item.embeddingProfileKey && item.embeddingProfileKey !== expectedProfileKey));
         if (targets.length === 0) return;
         const texts = targets.map(item => item.text || '');
         const vectors = await fetchEmbeddings(texts);
         targets.forEach((item, index) => {
             item.vector = Array.isArray(vectors[index]) ? vectors[index] : [];
+            item.embeddingDimensions = item.vector.length;
+            item.embeddingProfileKey = item.vector.length ? getEmbeddingProfileKey(item.vector.length, config) : '';
+            item.embeddingStatus = item.vector.length ? 'ready' : 'failed';
+            item.embeddedAt = item.vector.length ? Date.now() : null;
+            item.contentHash = Core ? Core.stableHash(item.text || '') : item.contentHash;
         });
     }
 
@@ -496,6 +681,14 @@
         if (!text) {
             throw new Error('记忆内容不能为空');
         }
+        const contentHash = Core ? Core.stableHash(text) : '';
+        const duplicate = contentHash ? chat.vectorMemory.entries.find(item => item.contentHash === contentHash) : null;
+        if (duplicate) {
+            duplicate.updatedAt = Date.now();
+            duplicate._deduplicated = true;
+            pushVectorHistory(chat, 'deduplicate', `跳过重复记忆：${duplicate.title || inferEntryTitle(text)}`);
+            return duplicate;
+        }
         const entry = {
             id: createVectorId('vector_entry'),
             title: String(payload.title || '').trim() || inferEntryTitle(text),
@@ -511,9 +704,23 @@
             meta: payload.meta || {}
         };
         if (!entry.vector.length) {
-            const vectors = await fetchEmbeddings([entry.text]);
-            entry.vector = Array.isArray(vectors[0]) ? vectors[0] : [];
+            try {
+                const vectors = await fetchEmbeddings([entry.text]);
+                entry.vector = Array.isArray(vectors[0]) ? vectors[0] : [];
+                entry.embeddingDimensions = entry.vector.length;
+                entry.embeddingProfileKey = entry.vector.length ? getEmbeddingProfileKey(entry.vector.length) : '';
+                entry.embeddingStatus = entry.vector.length ? 'ready' : 'failed';
+                entry.embeddedAt = entry.vector.length ? Date.now() : null;
+            } catch (error) {
+                entry.vector = [];
+                entry.embeddingDimensions = 0;
+                entry.embeddingProfileKey = '';
+                entry.embeddingStatus = 'pending';
+                entry.embeddingError = String(error.message || 'Embedding 失败').slice(0, 300);
+                entry._embeddingWarning = error;
+            }
         }
+        entry.contentHash = contentHash;
         chat.vectorMemory.entries.unshift(entry);
         pushVectorHistory(chat, 'create', `新增记忆：${entry.title}`);
         clearVectorContextCache(chat);
@@ -521,8 +728,26 @@
     }
 
     function parseVectorSummaryXml(rawContent) {
+        const raw = String(rawContent || '').trim();
+        const jsonCandidate = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] || raw;
+        try {
+            const parsedJson = JSON.parse(jsonCandidate);
+            const candidates = Array.isArray(parsedJson?.memories) ? parsedJson.memories : [parsedJson];
+            const normalized = candidates.filter(item => item && typeof item === 'object').map(item => ({
+                title: String(item.title || '').trim(),
+                content: String(item.content || item.text || '').trim(),
+                tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : []
+            })).filter(item => item.content);
+            const first = normalized[0];
+            if (first && typeof first === 'object') {
+                return {
+                    ...first,
+                    memories: normalized
+                };
+            }
+        } catch (_) { /* continue with the preserved XML contract */ }
         const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(`<root>${rawContent || ''}</root>`, 'text/xml');
+        const xmlDoc = parser.parseFromString(`<root>${raw}</root>`, 'text/xml');
         if (xmlDoc.querySelector('parsererror')) {
             return null;
         }
@@ -547,7 +772,7 @@
         if (!historyText.trim()) {
             throw new Error('当前范围内没有可总结的消息');
         }
-        const prompt = fillTemplateString(template?.summaryPrompt || '', {
+        const prompt = fillTemplateString(template?.summaryPrompt || createStarterVectorTemplate().summaryPrompt, {
             charName: chat.realName || '',
             userName: chat.myName || '',
             rangeLabel: `${start}-${end}`,
@@ -555,39 +780,68 @@
         });
         const rawContent = await requestVectorSummary(prompt, Number(template?.summaryTemperature) || 0.35);
         const parsed = parseVectorSummaryXml(rawContent);
-        const summaryText = parsed && parsed.content
-            ? trimText(parsed.content, Math.max(200, parseInt(template?.maxEntryLength, 10) || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH))
-            : trimText(String(rawContent || '').replace(/<[^>]+>/g, '').trim(), Math.max(200, parseInt(template?.maxEntryLength, 10) || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH));
-        if (!summaryText) {
+        const maxLength = Math.max(200, parseInt(template?.maxEntryLength, 10) || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH);
+        const parsedMemories = parsed?.memories?.length ? parsed.memories : (parsed?.content ? [parsed] : []);
+        const fallbackText = trimText(String(rawContent || '').replace(/<[^>]+>/g, '').trim(), maxLength);
+        if (!parsedMemories.length && !fallbackText) {
             throw new Error('没有提取到有效的向量记忆内容');
         }
-        const entry = await addVectorEntry(chat, {
-            title: parsed && parsed.title ? parsed.title : `记忆 ${start}-${end}`,
-            text: summaryText,
-            tags: parsed ? parsed.tags : [],
-            source: options.source || 'manual_summary',
-            range: { start, end }
-        });
-        entry.rangeLabel = `${start}-${end}`;
-        pushVectorHistory(chat, options.source || 'manual_summary', `总结消息 ${start}-${end}`);
-        return entry;
+        const memories = parsedMemories.length ? parsedMemories : [{ title: '', content: fallbackText, tags: [] }];
+        const createdEntries = [];
+        for (const memory of memories.slice(0, 20)) {
+            const entry = await addVectorEntry(chat, {
+                title: memory.title || `记忆 ${start}-${end}`,
+                text: trimText(memory.content, maxLength),
+                tags: memory.tags || [],
+                source: options.source || 'manual_summary',
+                range: { start, end }
+            });
+            entry.rangeLabel = `${start}-${end}`;
+            createdEntries.push(entry);
+        }
+        pushVectorHistory(chat, options.source || 'manual_summary', `总结消息 ${start}-${end}，生成 ${createdEntries.length} 条记忆`);
+        return createdEntries[0];
+    }
+
+    function isEligibleVectorMessage(message) {
+        if (!message || message.isContextDisabled || message.isThinking || message.excludeFromContext) return false;
+        if (message.type === 'mcp_activity' || message.isNodeBoundary || message.isNodeSummaryMsg) return false;
+        if (!['user', 'assistant', 'char'].includes(message.role)) return false;
+        return !!readMessageText(message).trim();
+    }
+
+    function getEligibleVectorMessages(chat) {
+        const history = Array.isArray(chat?.history) ? chat.history : [];
+        return history.map((message, rawIndex) => ({ message, rawIndex }))
+            .filter(item => isEligibleVectorMessage(item.message));
     }
 
     function getAutoVectorCursorInfo(chat) {
         ensureVectorMemoryState(chat);
         const history = Array.isArray(chat && chat.history) ? chat.history : [];
+        const eligible = getEligibleVectorMessages(chat);
         const interval = Math.max(10, parseInt(chat.vectorMemory.autoSummaryInterval, 10) || VECTOR_MEMORY_DEFAULT_INTERVAL);
-        const cursorIndex = chat.vectorMemory.lastSummarizedMsgId
-            ? history.findIndex(message => message.id === chat.vectorMemory.lastSummarizedMsgId)
+        let eligibleCursorIndex = chat.vectorMemory.lastSummarizedMsgId
+            ? eligible.findIndex(item => item.message.id === chat.vectorMemory.lastSummarizedMsgId)
             : -1;
-        const nextStartIndex = cursorIndex + 1;
-        const unsummarizedCount = Math.max(0, history.length - nextStartIndex);
+        if (eligibleCursorIndex < 0 && chat.vectorMemory.lastSummarizedMsgTimestamp) {
+            for (let index = eligible.length - 1; index >= 0; index--) {
+                if ((eligible[index].message.timestamp || 0) <= chat.vectorMemory.lastSummarizedMsgTimestamp) {
+                    eligibleCursorIndex = index;
+                    break;
+                }
+            }
+        }
+        const nextEligibleIndex = eligibleCursorIndex + 1;
+        const unsummarizedCount = Math.max(0, eligible.length - nextEligibleIndex);
         const completedBatchCount = Math.floor(unsummarizedCount / interval);
         return {
             history,
+            eligible,
             interval,
-            cursorIndex,
-            nextStartIndex,
+            cursorIndex: eligibleCursorIndex >= 0 ? eligible[eligibleCursorIndex].rawIndex : -1,
+            eligibleCursorIndex,
+            nextStartIndex: nextEligibleIndex,
             unsummarizedCount,
             completedBatchCount
         };
@@ -596,9 +850,11 @@
     function getNextAutoVectorRange(chat) {
         const info = getAutoVectorCursorInfo(chat);
         if (info.completedBatchCount <= 0) return null;
+        const first = info.eligible[info.nextStartIndex];
+        const last = info.eligible[info.nextStartIndex + info.interval - 1];
         return {
-            start: info.nextStartIndex + 1,
-            end: info.nextStartIndex + info.interval,
+            start: first.rawIndex + 1,
+            end: last.rawIndex + 1,
             info
         };
     }
@@ -837,10 +1093,25 @@
     function buildVectorPackagePayload(chat) {
         ensureVectorMemoryState(chat);
         const template = getActiveVectorTemplate(chat);
+        let embeddingProfile = null;
+        try {
+            const config = getVectorApiConfig();
+            const dimensions = Number(config.health?.dimensions
+                || config.dimensions
+                || chat.vectorMemory.entries.find(item => item.embeddingStatus === 'ready')?.embeddingDimensions
+                || 0);
+            embeddingProfile = {
+                provider: config.provider || 'newapi',
+                model: config.model,
+                dimensions,
+                profileKey: dimensions ? getEmbeddingProfileKey(dimensions, config) : null
+            };
+        } catch (_) { /* package remains portable without API configuration */ }
         return {
             type: 'vector_memory_package',
-            version: 1,
+            version: 2,
             template: template ? deepClone(template) : null,
+            embeddingProfile,
             binding: {
                 memoryMode: chat.memoryMode,
                 autoSummaryEnabled: !!chat.vectorMemory.autoSummaryEnabled,
@@ -908,13 +1179,27 @@
             }
             if (chat && Array.isArray(parsed.entries)) {
                 ensureVectorMemoryState(chat);
-                const importedEntries = deepClone(parsed.entries).map(entry => ({
-                    ...entry,
-                    id: createVectorId('vector_entry'),
-                    vector: Array.isArray(entry.vector) ? entry.vector : [],
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
-                }));
+                let currentConfig = null;
+                try { currentConfig = getVectorApiConfig(); } catch (_) { /* keep text pending */ }
+                const importedEntries = deepClone(parsed.entries).map(entry => {
+                    const vector = Array.isArray(entry.vector) && entry.vector.every(item => Number.isFinite(Number(item)))
+                        ? entry.vector.map(Number)
+                        : [];
+                    const packageProfileKey = entry.embeddingProfileKey || parsed.embeddingProfile?.profileKey || '';
+                    const currentProfileKey = currentConfig && vector.length ? getEmbeddingProfileKey(vector.length, currentConfig) : '';
+                    const compatible = !!vector.length && !!packageProfileKey && packageProfileKey === currentProfileKey;
+                    return {
+                        ...entry,
+                        id: createVectorId('vector_entry'),
+                        vector,
+                        embeddingProfileKey: compatible ? currentProfileKey : (packageProfileKey || 'legacy_import'),
+                        embeddingDimensions: vector.length,
+                        embeddingStatus: compatible ? 'ready' : 'pending',
+                        contentHash: Core ? Core.stableHash(entry.text || '') : '',
+                        createdAt: Date.now(),
+                        updatedAt: Date.now()
+                    };
+                });
                 chat.vectorMemory.entries.unshift(...importedEntries.reverse());
                 if (parsed.binding) {
                     chat.vectorMemory.autoSummaryEnabled = !!parsed.binding.autoSummaryEnabled;
@@ -964,7 +1249,9 @@
             content.innerHTML = '<div class="vector-memory-empty-card">还没有向量记忆。可以先手动总结，或把日记/表格转过来。</div>';
             return;
         }
-        content.innerHTML = chat.vectorMemory.entries.map(entry => `
+        content.innerHTML = chat.vectorMemory.entries.map(entry => {
+            const statusMap = { ready: '向量就绪', pending: '待向量化', failed: '向量失败', legacy: '旧向量' };
+            return `
             <div class="vector-memory-card ${activeIds.has(entry.id) ? 'is-hit' : ''}">
                 <div class="vector-memory-card-head">
                     <div>
@@ -973,6 +1260,8 @@
                             <span>${escapeHtml(entry.source || 'manual')}</span>
                             <span>${new Date(entry.updatedAt || entry.createdAt || Date.now()).toLocaleString()}</span>
                             ${entry.range ? `<span>范围 ${entry.range.start}-${entry.range.end}</span>` : ''}
+                            <span>${statusMap[entry.embeddingStatus] || '待检查'}</span>
+                            ${entry.embeddingDimensions ? `<span>${entry.embeddingDimensions} 维</span>` : ''}
                             ${activeIds.has(entry.id) ? '<span>当前命中</span>' : ''}
                         </div>
                     </div>
@@ -985,7 +1274,8 @@
                 <div class="vector-memory-card-body">${escapeHtml(entry.text || '')}</div>
                 <div class="vector-memory-card-tags">${getEntryTags(entry) ? `标签：${escapeHtml(getEntryTags(entry))}` : '标签：暂无'} · 权重 ${Number(entry.weight || 1).toFixed(2)}</div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     }
 
     function renderVectorTemplatesTab(chat) {
@@ -1002,7 +1292,7 @@
                             <div class="vector-memory-card-title">${escapeHtml(template.name || '未命名模板')}</div>
                             <div class="vector-memory-card-meta">
                                 <span>TopK ${template.topK || VECTOR_MEMORY_DEFAULT_TOP_K}</span>
-                                <span>阈值 ${Number(template.similarityThreshold || VECTOR_MEMORY_DEFAULT_THRESHOLD).toFixed(2)}</span>
+                                <span>阈值 ${Number(template.similarityThreshold ?? VECTOR_MEMORY_DEFAULT_THRESHOLD).toFixed(2)}</span>
                                 <span>最长 ${template.maxEntryLength || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH} 字</span>
                             </div>
                         </div>
@@ -1064,12 +1354,14 @@
     function refreshVectorHeader(chat) {
         const summary = document.getElementById('vector-memory-chat-summary');
         const modePill = document.getElementById('vector-memory-mode-pill');
+        const healthEl = document.getElementById('vector-memory-health');
         if (!summary || !modePill) return;
         if (!chat) {
             summary.textContent = '请先进入一个私聊角色。';
             modePill.textContent = '未选择角色';
             modePill.style.background = 'rgba(160,160,160,0.12)';
             modePill.style.color = '#666';
+            if (healthEl) healthEl.textContent = '向量状态：未选择角色';
             return;
         }
         ensureVectorMemoryState(chat);
@@ -1084,6 +1376,17 @@
         modePill.textContent = meta.label;
         modePill.style.background = meta.bg;
         modePill.style.color = meta.color;
+        if (healthEl) {
+            const health = runtimeHealth.get(chat.id);
+            const pendingCount = chat.vectorMemory.entries.filter(item => item.embeddingStatus === 'pending' || !item.vector?.length).length;
+            const staleCount = chat.vectorMemory.entries.filter(item => item.embeddingStatus === 'failed').length;
+            let text = health?.message || '尚未执行本轮检索';
+            if (pendingCount) text += ` · 待向量化 ${pendingCount}`;
+            if (staleCount) text += ` · 失败 ${staleCount}`;
+            healthEl.textContent = `向量状态：${text}`;
+            healthEl.classList.toggle('is-ok', health?.mode === 'semantic');
+            healthEl.classList.toggle('is-warning', health?.mode === 'degraded' || pendingCount > 0 || staleCount > 0);
+        }
         document.querySelectorAll('[data-vector-memory-mode-switch]').forEach(button => {
             button.classList.toggle('btn-primary', button.dataset.vectorMemoryModeSwitch === chat.memoryMode);
             button.classList.toggle('btn-secondary', button.dataset.vectorMemoryModeSwitch !== chat.memoryMode);
@@ -1120,7 +1423,7 @@
         document.getElementById('vector-template-name').value = template?.name || '';
         document.getElementById('vector-template-description').value = template?.description || '';
         document.getElementById('vector-template-topk').value = template?.topK || VECTOR_MEMORY_DEFAULT_TOP_K;
-        document.getElementById('vector-template-threshold').value = template?.similarityThreshold || VECTOR_MEMORY_DEFAULT_THRESHOLD;
+        document.getElementById('vector-template-threshold').value = template?.similarityThreshold ?? VECTOR_MEMORY_DEFAULT_THRESHOLD;
         document.getElementById('vector-template-max-length').value = template?.maxEntryLength || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH;
         document.getElementById('vector-template-summary-prompt').value = template?.summaryPrompt || createStarterVectorTemplate().summaryPrompt;
         document.getElementById('vector-template-inject-prompt').value = template?.injectPrompt || createStarterVectorTemplate().injectPrompt;
@@ -1145,7 +1448,10 @@
             name,
             description: (document.getElementById('vector-template-description')?.value || '').trim(),
             topK: Math.max(1, parseInt(document.getElementById('vector-template-topk')?.value, 10) || VECTOR_MEMORY_DEFAULT_TOP_K),
-            similarityThreshold: Math.max(0, Math.min(1, parseFloat(document.getElementById('vector-template-threshold')?.value) || VECTOR_MEMORY_DEFAULT_THRESHOLD)),
+            similarityThreshold: (() => {
+                const value = parseFloat(document.getElementById('vector-template-threshold')?.value);
+                return Math.max(0, Math.min(1, Number.isFinite(value) ? value : VECTOR_MEMORY_DEFAULT_THRESHOLD));
+            })(),
             maxEntryLength: Math.max(200, parseInt(document.getElementById('vector-template-max-length')?.value, 10) || VECTOR_MEMORY_DEFAULT_MAX_ENTRY_LENGTH),
             summaryPrompt: (document.getElementById('vector-template-summary-prompt')?.value || '').trim(),
             injectPrompt: (document.getElementById('vector-template-inject-prompt')?.value || '').trim(),
@@ -1210,7 +1516,8 @@
             await saveCharacter(chat.id);
             closeManualModal();
             renderVectorMemoryScreen();
-            showToast('向量记忆已生成');
+            const pending = chat.vectorMemory.entries[0]?.embeddingStatus === 'pending';
+            showToast(pending ? '记忆已保存，向量将在连接恢复后补建' : '向量记忆已生成');
         } catch (error) {
             console.error('[VectorMemory] manual summary failed:', error);
             if (typeof showApiError === 'function' && /API/i.test(error.message || '')) showApiError(error);
@@ -1225,8 +1532,10 @@
             showToast('当前没有新增消息需要总结');
             return;
         }
-        const start = info.nextStartIndex + 1;
-        const end = info.history.length;
+        const first = info.eligible[info.nextStartIndex];
+        const last = info.eligible[info.eligible.length - 1];
+        const start = first.rawIndex + 1;
+        const end = last.rawIndex + 1;
         await summarizeRangeToVectorEntry(chat, start, end, { source: 'latest_summary' });
         setVectorCursorByEndIndex(chat, end);
         await saveCharacter(chat.id);
@@ -1263,6 +1572,52 @@
         await saveCharacter(chat.id);
         renderVectorMemoryScreen();
         showToast('已绑定新的向量模板');
+    }
+
+    async function reindexCurrentVectorMemories() {
+        const chat = getCurrentVectorChat();
+        if (!chat || uiState.reindexing) return;
+        ensureVectorMemoryState(chat);
+        if (!chat.vectorMemory.entries.length) {
+            showToast('当前没有需要重建的向量记忆');
+            return;
+        }
+        uiState.reindexing = true;
+        const button = document.getElementById('vector-memory-reindex-btn');
+        if (button) {
+            button.disabled = true;
+            button.textContent = '重建中…';
+        }
+        chat.vectorMemory.entries.forEach(entry => { entry.embeddingStatus = 'pending'; });
+        try {
+            const batchSize = 8;
+            for (let index = 0; index < chat.vectorMemory.entries.length; index += batchSize) {
+                const batch = chat.vectorMemory.entries.slice(index, index + batchSize);
+                await embedEntriesIfNeeded(batch);
+                if (button) button.textContent = `重建 ${Math.min(index + batch.length, chat.vectorMemory.entries.length)}/${chat.vectorMemory.entries.length}`;
+                await saveCharacter(chat.id);
+            }
+            pushVectorHistory(chat, 'reindex', `已重建 ${chat.vectorMemory.entries.length} 条向量`);
+            clearVectorContextCache(chat);
+            await saveCharacter(chat.id);
+            runtimeHealth.set(chat.id, { mode: 'semantic', message: '全部记忆向量已重建', updatedAt: Date.now() });
+            showToast('全部向量已重建');
+        } catch (error) {
+            chat.vectorMemory.entries.forEach(entry => {
+                if (entry.embeddingStatus === 'pending') entry.embeddingStatus = 'failed';
+            });
+            runtimeHealth.set(chat.id, { mode: 'degraded', message: `重建失败：${error.message || '未知错误'}`, updatedAt: Date.now() });
+            await saveCharacter(chat.id);
+            if (typeof showApiError === 'function') showApiError(error);
+            else showToast(error.message || '向量重建失败');
+        } finally {
+            uiState.reindexing = false;
+            if (button) {
+                button.disabled = false;
+                button.textContent = '重建向量';
+            }
+            renderVectorMemoryScreen();
+        }
     }
 
     async function deleteTemplate(templateId) {
@@ -1381,6 +1736,9 @@
         const toTableBtn = document.getElementById('vector-memory-to-table-btn');
         if (toTableBtn) toTableBtn.addEventListener('click', convertVectorToTable);
 
+        const reindexBtn = document.getElementById('vector-memory-reindex-btn');
+        if (reindexBtn) reindexBtn.addEventListener('click', reindexCurrentVectorMemories);
+
         const autoToggle = document.getElementById('vector-memory-auto-toggle');
         if (autoToggle) {
             autoToggle.addEventListener('change', async (event) => {
@@ -1472,6 +1830,8 @@
         const openFromSettingsBtn = document.getElementById('setting-open-vector-memory-btn');
         if (openFromSettingsBtn) {
             openFromSettingsBtn.addEventListener('click', () => {
+                const backBtn = document.querySelector('#vector-memory-screen .back-btn');
+                if (backBtn) backBtn.setAttribute('data-target', 'chat-settings-screen');
                 renderVectorMemoryScreen();
                 switchScreen('vector-memory-screen');
             });
@@ -1485,4 +1845,5 @@
     window.prepareVectorMemoryContext = prepareVectorMemoryContext;
     window.checkAndTriggerVectorMemory = checkAndTriggerVectorMemory;
     window.resetVectorCursorToLatest = resetVectorCursorToLatest;
+    window.testVectorApiConfiguration = testVectorApiConfiguration;
 })();

@@ -290,8 +290,9 @@ function setupPomodoroApp() {
         showPomodoroTypingIndicator(messageP);
 
         try {
-            let { url, key, model } = db.apiSettings;
-            if (!url || !key || !model) {
+            const pomodoroApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('pomodoro', db.apiSettings) : db.apiSettings;
+            let { url, key, model } = pomodoroApiConfig;
+            if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(pomodoroApiConfig) : (!url || !key || !model)) {
                 messageP.textContent = 'API未配置，无法获取回应。';
                 return;
             }
@@ -349,7 +350,7 @@ function setupPomodoroApp() {
                 temperature: 0.8
             };
 
-            const reply = await fetchAiResponse(db.apiSettings, requestBody, headers, endpoint);
+            const reply = await fetchAiResponse(pomodoroApiConfig, requestBody, headers, endpoint);
 
             pomodoroSessionHistory.push({ type: 'user', content: promptType });
             pomodoroSessionHistory.push({ type: 'ai', content: reply });
