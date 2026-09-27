@@ -236,30 +236,6 @@
     position: relative;
 }
 
-.tab-item .unread-badge {
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    background-color: #ff3b30;
-    color: white;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 16px;
-    min-width: 16px;
-    height: 16px;
-    border-radius: 8px;
-    padding: 0 4px;
-    text-align: center;
-    z-index: 2;
-    display: none;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-    border: 1.5px solid #fff;
-}
-
-.tab-item .unread-badge.visible {
-    display: inline-block;
-}
-
 .tab-item.active.pill-black { 
     background-color: #1e1e1e;
     color: #fff;
@@ -553,6 +529,78 @@
     height: 36px;
     border-radius: var(--chat-avatar-radius);
     object-fit: cover;
+}
+
+.message-avatar[data-poke-target-id] {
+    touch-action: manipulation;
+}
+
+@keyframes poke-avatar-shake {
+    0%, 100% { transform: translateX(0) rotate(0); }
+    20% { transform: translateX(-3px) rotate(-5deg); }
+    40% { transform: translateX(3px) rotate(5deg); }
+    60% { transform: translateX(-2px) rotate(-3deg); }
+    80% { transform: translateX(2px) rotate(3deg); }
+}
+
+.poke-avatar-shake { animation: poke-avatar-shake 0.58s ease-in-out; }
+
+.poke-notification-row {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: calc(100% - 28px);
+}
+
+.poke-notification-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.poke-withdraw-btn {
+    flex-shrink: 0;
+    border: 0;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--primary-color);
+    font: inherit;
+    font-size: 11px;
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+.poke-effect {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    pointer-events: none;
+    font-size: clamp(54px, 22vw, 96px);
+    animation: poke-effect-pop 1.35s ease-out forwards;
+}
+
+@keyframes poke-effect-pop {
+    0% { opacity: 0; transform: scale(0.25) rotate(-10deg); }
+    24% { opacity: 1; transform: scale(1.05) rotate(4deg); }
+    72% { opacity: 0.9; transform: scale(1.18) rotate(0); }
+    100% { opacity: 0; transform: scale(1.45); }
+}
+
+.poke-effect-fireworks, .poke-effect-confetti, .poke-effect-sparkle,
+.poke-effect-petal, .poke-effect-snow, .poke-effect-bubble {
+    text-shadow: -52px -32px 0 currentColor, 54px -18px 0 currentColor, -40px 44px 0 currentColor, 48px 50px 0 currentColor;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .poke-avatar-shake, .poke-effect { animation: none; }
+    .poke-effect { display: none; }
 }
 
 .avatar-hidden { display: none !important; }
@@ -1688,7 +1736,7 @@
     position: static;
     width: 100%;
     height: 0;
-    background: #f7f7f7;
+    background: #ffffff;
     border-top-left-radius: 0;
     border-top-right-radius: 0;
     box-shadow: none;
@@ -1706,7 +1754,7 @@
 
 #chat-expansion-panel.visible {
     height: 35%; /* 固定高度 */
-    border-top: 1px solid #eee;
+    border-top: 1px solid #f0f0f0;
 }
 
 .panel-area {
@@ -1797,17 +1845,23 @@
     width: 50px;
     height: 50px;
     border-radius: 15px;
-    background-color: #fff;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    background-color: #f7f8fa;
+    border: 1px solid #f0f2f5;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
     display: flex;
     align-items: center;
     justify-content: center;
     margin-bottom: 8px;
-    transition: background-color 0.2s;
+    transition: all 0.2s ease;
 }
 
 .expansion-item:hover .expansion-item-icon {
-    background-color: #f0f0f0;
+    background-color: #eef1f5;
+}
+
+.expansion-item:active .expansion-item-icon {
+    transform: scale(0.94);
+    background-color: #e6ebf0;
 }
 
 .expansion-item-icon svg {

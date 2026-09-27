@@ -901,6 +901,9 @@ async function saveCurrentPersona() {
                     console.warn('Avatar recognize/notify failed for char', charId, err);
                 }
             }
+            if (window.AvatarSystem && typeof window.AvatarSystem.syncManualAvatarChange === 'function') {
+                window.AvatarSystem.syncManualAvatarChange(char.id, p.avatar, undefined);
+            }
             char.myAvatar = p.avatar;
             let finalPersona = '';
             if (binding.override) {

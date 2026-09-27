@@ -82,6 +82,11 @@ const VoiceSelector = {
         const selectBtn = document.getElementById('select-voice-id-btn');
         if (selectBtn) {
             selectBtn.addEventListener('click', () => {
+                if (globalThis.MinimaxTTSService?.config?.provider === 'volcengine') {
+                    document.getElementById('setting-custom-voice-id')?.focus();
+                    showToast('火山音色请填写下方自定义音色 ID；留空则使用 API 设置中的默认音色');
+                    return;
+                }
                 this.currentMode = 'char';
                 this.showModal();
             });
@@ -89,6 +94,11 @@ const VoiceSelector = {
         const selectUserBtn = document.getElementById('select-user-voice-id-btn');
         if (selectUserBtn) {
             selectUserBtn.addEventListener('click', () => {
+                if (globalThis.MinimaxTTSService?.userConfig?.provider === 'volcengine') {
+                    document.getElementById('setting-user-custom-voice-id')?.focus();
+                    showToast('火山音色请填写下方自定义音色 ID；留空则使用 API 设置中的默认音色');
+                    return;
+                }
                 this.currentMode = 'user';
                 this.showModal();
             });

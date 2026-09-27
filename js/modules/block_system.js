@@ -80,8 +80,8 @@
     }
 
     async function callBlockApi(systemPrompt, userContent) {
-        var apiConfig = db.apiSettings;
-        if (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model) {
+        var apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('chat', db.apiSettings) : db.apiSettings;
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model)) {
             return { ok: false, error: '请先在 api 应用中完成设置' };
         }
         var url = apiConfig.url.replace(/\/$/, '');
@@ -112,13 +112,7 @@
             };
         }
         try {
-            var res = await fetch(endpoint, { method: 'POST', headers: headers, body: JSON.stringify(body) });
-            var text = await res.text();
-            if (!res.ok) return { ok: false, error: text || res.statusText };
-            var data = JSON.parse(text);
-            var raw = provider === 'gemini'
-                ? (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text)
-                : (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content);
+            var raw = await fetchAiResponse(apiConfig, body, headers, endpoint, false);
             return { ok: true, text: (raw || '').trim() };
         } catch (e) {
             return { ok: false, error: e.message };

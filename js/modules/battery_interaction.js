@@ -144,41 +144,15 @@ ${recentHistory}
 `;
 
             // 2. 调用 API
-            let {url, key, model, provider} = db.apiSettings;
-            if (!url || !key || !model) return;
+            const batteryApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('battery', db.apiSettings) : db.apiSettings;
+            let {url, key, model, provider} = batteryApiConfig;
+            if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(batteryApiConfig) : (!url || !key || !model)) return;
 
             if (url.endsWith('/')) url = url.slice(0, -1);
 
-            let responseText = '';
-
-            if (provider === 'gemini') {
-                const endpoint = `${url}/v1beta/models/${model}:generateContent?key=${getRandomValue(key)}`;
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        contents: [{ role: 'user', parts: [{ text: systemPrompt }] }]
-                    })
-                });
-                const data = await response.json();
-                responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-            } else {
-                const endpoint = `${url}/v1/chat/completions`;
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${key}`
-                    },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: [{ role: 'user', content: systemPrompt }],
-                        temperature: 0.7
-                    })
-                });
-                const data = await response.json();
-                responseText = data.choices[0].message.content;
-            }
+            const endpoint = provider === 'gemini' ? `${url}/v1beta/models/${model}:generateContent?key=${getRandomValue(key)}` : `${url}/v1/chat/completions`;
+            const headers = provider === 'gemini' ? {'Content-Type': 'application/json'} : {'Content-Type': 'application/json', 'Authorization': `Bearer ${key}`};
+            let responseText = await fetchAiResponse(batteryApiConfig, { model, messages: [{ role: 'user', content: systemPrompt }], temperature: 0.7, stream: false }, headers, endpoint, false);
 
             // 3. 处理结果
             responseText = responseText.trim();

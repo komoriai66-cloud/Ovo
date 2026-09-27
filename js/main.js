@@ -124,9 +124,12 @@ const init = async () => {
     if (typeof initMoreMenu === 'function') initMoreMenu();
     if (typeof setupPhoneScreen === 'function') setupPhoneScreen();
     if (typeof initCotSettings === 'function') initCotSettings();
+    if (window.McpManager) { window.McpManager.injectPermissionContainers(); await window.McpManager.init(); }
     if (window.VideoCallModule) window.VideoCallModule.init();
     if (typeof NodeSystem !== 'undefined') NodeSystem.init();
     if (typeof KeepAliveModule !== 'undefined') KeepAliveModule.init();
+    if (window.ReplyResilience) await window.ReplyResilience.init();
+    if (window.PokeSystem) window.PokeSystem.init();
 
     // 全局事件绑定
     const delWBBtn = document.getElementById('delete-selected-world-books-btn');
@@ -179,10 +182,18 @@ const init = async () => {
     });
 };
 
+let autoReplyCheckRunning = false;
+
 async function checkAutoReply() {
+    if (autoReplyCheckRunning || typeof db === 'undefined' || !Array.isArray(db.characters)) return;
+    autoReplyCheckRunning = true;
     const now = Date.now();
-    for (const char of db.characters) {
+    try {
+      if (window.FollowUpReply) await window.FollowUpReply.checkDue();
+      for (const char of db.characters) {
         if (char.autoReply && char.autoReply.enabled) {
+            // 已排定的回复后追发优先，避免两种主动消息抢在一起发送。
+            if (window.FollowUpReply && window.FollowUpReply.hasPending(char)) continue;
             const mode = char.autoReply.mode || 'fixed';
             let intervalMs;
             
@@ -198,10 +209,13 @@ async function checkAutoReply() {
                 intervalMs = (char.autoReply.interval || 60) * 60 * 1000;
             }
             
-            const lastTriggerTime = char.autoReply.lastTriggerTime || 0;
+            const lastTriggerTime = char.autoReply.lastSuccessTime || char.autoReply.lastTriggerTime || 0;
+            const retryAt = Number(char.autoReply.retryAt || 0);
             
-            // 检查上次触发时间
-            if (now - lastTriggerTime < intervalMs) continue;
+            // 正常周期未到，且当前不是失败后的到期重试。
+            if ((!retryAt || now < retryAt) && now - lastTriggerTime < intervalMs) continue;
+            if (retryAt && now < retryAt) continue;
+            if (typeof isInQuietHours === 'function' && isInQuietHours(char.id)) continue;
 
             let lastMsgTime = 0;
             if (char.history && char.history.length > 0) {
@@ -214,474 +228,60 @@ async function checkAutoReply() {
             // 检查无操作时间 (最后一条消息到现在的时间)
             if (now - lastMsgTime > intervalMs) {
                 console.log(`Auto-reply triggered for ${char.remarkName} (mode: ${mode}, interval: ${intervalMs/60000}m)`);
-                char.autoReply.lastTriggerTime = now;
-                if (mode === 'random') {
-                    // 触发后重新生成下一次的随机间隔
-                    const min = char.autoReply.minInterval || 60;
-                    const max = char.autoReply.maxInterval || 180;
-                    const randomMinutes = Math.floor(Math.random() * (max - min + 1)) + min;
-                    char.autoReply.nextRandomIntervalMs = randomMinutes * 60 * 1000;
-                }
-                await saveCharacter(char.id); // 先保存触发时间和下一次间隔，防止重复触发
-                await getAiReply(char.id, 'private', true);
-            }
-        }
-    }
-}
-
-// === 登录界面与逻辑 ===
-function renderLoginOverlay() {
-    // 防止重复生成
-    if (document.getElementById('login-overlay')) return;
-
-    const overlay = document.createElement('div');
-    overlay.id = 'login-overlay';
-    overlay.style.cssText = `
-        position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-        background: rgba(0,0,0,0.85); z-index: 99999; 
-        display: flex; flex-direction: column; 
-        justify-content: center; align-items: center; 
-        backdrop-filter: blur(5px);
-    `;
-
-    // 注入 CSS
-    const style = document.createElement('style');
-    style.textContent = `
-        .browser {
-            width: 100%;
-            height: 100%;
-            background: #c7cccd;
-            border-radius: 0;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            position: relative;
-            box-shadow: none;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            animation: fadeIn 0.3s ease-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        /* 标签栏 */
-        .tabs-head {
-            background-color: #bababa;
-            height: 40px;
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            padding-left: 15px;
-            padding-right: 12px;
-        }
-
-        .tabs-head .tab-open {
-            width: 100px;
-            height: 32px;
-            border-radius: 8px 8px 0 0;
-            background-color: #eaf5ff;
-            display: flex;
-            gap: 5px;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 10px;
-            position: relative;
-        }
-
-        .tabs-head .tab-open .rounded-l {
-            position: absolute;
-            background-color: #eaf5ff;
-            width: 20px; height: 20px;
-            bottom: 0; left: -20px;
-            overflow: hidden;
-        }
-        .tabs-head .tab-open .rounded-l .mask-round {
-            width: 100%; height: 100%;
-            background-color: #bababa;
-            border-radius: 0 0 10px 0;
-        }
-
-        .tabs-head .tab-open .rounded-r {
-            position: absolute;
-            background-color: #eaf5ff;
-            width: 20px; height: 20px;
-            bottom: 0; right: -20px;
-            overflow: hidden;
-        }
-        .tabs-head .tab-open .rounded-r .mask-round {
-            width: 100%; height: 100%;
-            background-color: #bababa;
-            border-radius: 0 0 0 10px;
-        }
-
-        .tabs-head .tab-open span { color: #555; font-size: 12px; font-weight: 600; }
-        .tabs-head .tab-open .close-tab { color: #999; font-size: 10px; cursor: pointer; }
-
-        .window-opt { display: flex; gap: 6px; margin-bottom: 10px; }
-        .window-opt button {
-            width: 10px; height: 10px; border-radius: 50%; border: none; padding: 0;
-            cursor: pointer;
-        }
-        .window-opt button:nth-child(1) { background: #ff5f57; }
-        .window-opt button:nth-child(2) { background: #ffbd2e; }
-        .window-opt button:nth-child(3) { background: #28c940; }
-
-        /* 地址栏 */
-        .head-browser {
-            background-color: #eaf5ff;
-            padding: 8px 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            border-bottom: 1px solid #c7e0f8;
-        }
-        .head-browser button { color: #888; background: none; border: none; font-size: 14px; cursor: pointer; }
-        .head-browser input {
-            flex: 1;
-            background: #fdffff;
-            border: 1px solid #c7e0f8;
-            border-radius: 15px;
-            height: 26px;
-            padding: 0 15px;
-            font-size: 12px;
-            color: #666;
-            outline: none;
-            text-align: center;
-        }
-
-        /* 内容区域 */
-        .browser-content {
-            flex: 1;
-            background: #fdffff;
-            padding: 30px 25px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center; /* 垂直居中 */
-        }
-
-        /* 限制内容最大宽度，优化排版 */
-        .login-form-container {
-            width: 100%;
-            max-width: 320px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .login-title {
-            font-size: 24px;
-            font-weight: 700;
-            color: #555;
-            margin-bottom: 8px;
-            letter-spacing: 1px;
-            text-align: center;
-        }
-
-        .login-divider {
-            font-size: 12px;
-            color: #c7e0f8;
-            margin-bottom: 35px;
-            font-family: monospace;
-            text-align: center;
-        }
-
-        .login-input {
-            width: 100%;
-            padding: 14px 15px;
-            margin-bottom: 18px;
-            border: 2px solid #eaf5ff;
-            background: #f8fdff;
-            border-radius: 12px;
-            font-size: 15px;
-            outline: none;
-            transition: all 0.3s;
-            box-sizing: border-box;
-            color: #555;
-        }
-        .login-input:focus {
-            border-color: #c7e0f8;
-            background: #fff;
-            box-shadow: 0 0 0 4px rgba(199, 224, 248, 0.2);
-        }
-        .login-input::placeholder { color: #bababa; }
-
-        .login-btn {
-            width: 100%;
-            padding: 14px;
-            margin-top: 15px;
-            background: #c7e0f8;
-            color: #fff;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            box-shadow: 0 4px 15px rgba(199, 224, 248, 0.4);
-        }
-        .login-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(199, 224, 248, 0.6);
-            filter: brightness(0.95);
-        }
-        .login-btn:active { transform: translateY(1px); }
-
-        .login-hint {
-            margin-top: 20px;
-            font-size: 12px;
-            color: #007aff;
-            text-align: center;
-            line-height: 1.6;
-            cursor: pointer;
-            text-decoration: underline;
-        }
-        .login-hint:hover {
-            color: #0056b3;
-        }
-
-        /* 强制弹窗样式 */
-        #forced-modal-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.6); z-index: 100000;
-            display: flex; justify-content: center; align-items: center;
-            backdrop-filter: blur(3px);
-            animation: fadeIn 0.3s;
-        }
-        #forced-modal-window {
-            background: #fff; width: 85%; max-width: 320px;
-            border-radius: 12px; padding: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-            text-align: left;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        }
-        #forced-modal-title {
-            font-size: 18px; font-weight: bold; color: #333;
-            margin-bottom: 15px; text-align: center;
-        }
-        #forced-modal-content {
-            font-size: 14px; color: #555; line-height: 1.6;
-            margin-bottom: 20px;
-        }
-        #forced-modal-btn {
-            width: 100%; padding: 12px;
-            background: #ccc; color: #fff;
-            border: none; border-radius: 8px;
-            font-size: 14px; cursor: not-allowed;
-            transition: background 0.3s;
-        }
-        #forced-modal-btn.active {
-            background: #007aff; cursor: pointer;
-        }
-
-        #login-msg {
-            margin-top: 15px;
-            font-size: 13px;
-            min-height: 20px;
-            text-align: center;
-            font-weight: 500;
-        }
-    `;
-    document.head.appendChild(style);
-
-    overlay.innerHTML = `
-        <div class="browser">
-            <div class="tabs-head">
-                <div class="tabs">
-                    <div class="tab-open">
-                        <div class="rounded-l"><div class="mask-round"></div></div>
-                        <span>UwU</span>
-                        <div class="close-tab">✕</div>
-                        <div class="rounded-r"><div class="mask-round"></div></div>
-                    </div>
-                </div>
-                <div class="window-opt">
-                    <button></button>
-                    <button></button>
-                    <button class="window-close"></button>
-                </div>
-            </div>
-
-            <div class="head-browser">
-                <button>←</button>
-                <button style="opacity:0.5">→</button>
-                <input type="text" value="UwUbibobibo.com" readonly>
-                <button>⋮</button>
-                <button class="star">✰</button>
-            </div>
-
-            <div class="browser-content">
-                <div class="login-form-container">
-                    <div class="login-title">小章鱼UwU登录系统</div>
-                    <div class="login-divider">₊┈𓏴𓏴₊-୨★୧-₊𓏴𓏴┈₊</div>
-                    
-                    <input type="text" id="login-uid" placeholder="请输入账号 ID" class="login-input">
-                    <input type="password" id="login-pwd" placeholder="请输入密码" class="login-input">
-                    
-                    <button id="btn-login-submit" class="login-btn">登 录</button>
-                    <div class="login-hint" id="forgot-pwd-link">忘记密码？(点击查看获取方法)</div>
-                    <p id="login-msg"></p>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.body.prepend(overlay);
-
-    // 绑定事件 (确保元素存在后才绑定)
-    document.getElementById('btn-login-submit').onclick = tryLogin;
-    document.getElementById('login-pwd').onkeypress = function(e) {
-        if (e.key === 'Enter') tryLogin();
-    };
-    
-    // 绑定关闭按钮（可选：清空输入）
-    overlay.querySelector('.window-close').onclick = () => {
-        document.getElementById('login-uid').value = '';
-        document.getElementById('login-pwd').value = '';
-        document.getElementById('login-msg').textContent = '';
-    };
-
-    // 忘记密码弹窗逻辑
-    const forgotLink = document.getElementById('forgot-pwd-link');
-    if (forgotLink) {
-        forgotLink.onclick = () => {
-            const modal = document.createElement('div');
-            modal.id = 'forced-modal-overlay';
-            modal.innerHTML = `
-                <div id="forced-modal-window">
-                    <div id="forced-modal-title">获取账密方法</div>
-                    <div id="forced-modal-content">
-                        请前往 <span style="color: #ff453a;">dc尾巴镇-ee小手机主频道</span><br>发送<span style="color: #ff453a;">/小手机</span>指令获取账密。<br><br>
-                        <strong>注意事项：</strong><br>
-                        1. 输入/小手机时，输入框上方会自动弹出<strong style="color: #ff453a;">小狗图标</strong>的可点击指令，点击小狗图标指令<strong style="color: #ff453a;">再点击发送</strong><br>
-                        2. 如未自动出现带图标的指令，优先更新discord或使用网页端<br>
-                        3. 发送指令时<strong>【仅限ee小手机频道】</strong>，其他频道无效<br>
-                        4. 如发送指令未能成功获取账密，请<strong style="color: #ff453a;">自行删除</strong>那条消息
-                    </div>
-                    <button id="forced-modal-btn" disabled>请阅读 (10s)</button>
-                </div>
-            `;
-            document.body.appendChild(modal);
-
-            const btn = document.getElementById('forced-modal-btn');
-            let timeLeft = 10;
-            
-            const timer = setInterval(() => {
-                timeLeft--;
-                if (timeLeft > 0) {
-                    btn.textContent = `请阅读 (${timeLeft}s)`;
+                char.autoReply.lastAttemptTime = now;
+                // 先持久化尝试标记，但不提前消耗成功周期。
+                await saveCharacter(char.id);
+                const succeeded = await getAiReply(char.id, 'private', true);
+                if (succeeded) {
+                    const completedAt = Date.now();
+                    if (window.FollowUpReply) window.FollowUpReply.markOtherBackgroundSuccess(char, completedAt);
+                    char.autoReply.lastTriggerTime = completedAt;
+                    char.autoReply.lastSuccessTime = completedAt;
+                    char.autoReply.retryAt = 0;
+                    char.autoReply.failureCount = 0;
+                    if (mode === 'random') {
+                        const min = char.autoReply.minInterval || 60;
+                        const max = char.autoReply.maxInterval || 180;
+                        const randomMinutes = Math.floor(Math.random() * (max - min + 1)) + min;
+                        char.autoReply.nextRandomIntervalMs = randomMinutes * 60 * 1000;
+                    }
                 } else {
-                    clearInterval(timer);
-                    btn.textContent = '我已了解';
-                    btn.disabled = false;
-                    btn.classList.add('active');
-                    btn.onclick = () => modal.remove();
+                    const failureCount = Math.min(3, Number(char.autoReply.failureCount || 0) + 1);
+                    char.autoReply.failureCount = failureCount;
+                    // 1/3/15 分钟退避，页面恢复或联网后也会及时补检。
+                    const backoffMinutes = failureCount === 1 ? 1 : failureCount === 2 ? 3 : 15;
+                    char.autoReply.retryAt = Date.now() + backoffMinutes * 60 * 1000;
                 }
-            }, 1000);
-        };
-    }
-}
-
-async function tryLogin() {
-    // 获取元素
-    const uidEl = document.getElementById('login-uid');
-    const pwdEl = document.getElementById('login-pwd');
-    const msgEl = document.getElementById('login-msg');
-    const btn = document.getElementById('btn-login-submit');
-
-    // 安全检查
-    if (!uidEl || !pwdEl) {
-        console.error("找不到登录输入框，请刷新页面");
-        return;
-    }
-
-    const uid = uidEl.value.trim();
-    const pwd = pwdEl.value.trim();
-
-    if (!uid || !pwd) {
-        msgEl.textContent = "请输入完整的账号和密码";
-        return;
-    }
-
-    // UI 反馈：正在验证
-    msgEl.style.color = "#007aff";
-    msgEl.textContent = "正在连接服务器验证...";
-    const originalBtnText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "验证中...";
-
-    try {
-        // 调用新 API 验证
-        const res = await fetch('https://puppy-subscription-api.zeabur.app/api/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ account: uid, password: pwd })
-        });
-
-        const data = await res.json();
-
-        if (data.success) {
-            // 验证成功
-            msgEl.style.color = "#32d74b";
-            msgEl.textContent = "验证通过，正在进入...";
-
-            // 保存登录状态
-            localStorage.setItem('ephone_auth', 'true');
-
-            // 初始化数据库 (无参数，使用默认库名)
-            initDatabase();
-            
-            // 移除遮罩
-            const overlay = document.getElementById('login-overlay');
-            if (overlay) {
-                overlay.style.transition = 'opacity 0.5s ease';
-                overlay.style.opacity = '0';
-                setTimeout(() => overlay.remove(), 500);
+                await saveCharacter(char.id);
             }
-            
-            // 启动 App
-            init(); 
-        } else {
-            // 验证失败
-            throw new Error(data.message || '账号或密码错误');
         }
-    } catch (error) {
-        console.error(error);
-        msgEl.style.color = "#ff453a";
-        msgEl.textContent = "验证失败: " + (error.message || "网络错误");
-        btn.style.background = "#ff453a";
-        setTimeout(() => btn.style.background = "#007aff", 500);
+      }
     } finally {
-        // 恢复按钮状态
-        btn.disabled = false;
-        btn.textContent = originalBtnText;
+        autoReplyCheckRunning = false;
     }
 }
+
+// 从后台回到页面或网络恢复时做一次补检；单次补检每个角色最多触发一条。
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void checkAutoReply();
+});
+window.addEventListener('pageshow', () => { void checkAutoReply(); });
+window.addEventListener('online', () => { void checkAutoReply(); });
 
 // === 主入口 ===
-document.addEventListener('DOMContentLoaded', () => {
-    // 检查本地是否已登录
-    const isAuth = localStorage.getItem('ephone_auth');
-
-    if (isAuth === 'true') {
-        console.log(`[Auto Login] 检测到已授权状态`);
-        try {
-            // 已登录：直接初始化数据库并启动
-            initDatabase();
-            init(); 
-        } catch (e) {
-            console.error("自动登录出错，重置状态:", e);
-            localStorage.removeItem('ephone_auth');
-            renderLoginOverlay();
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        initDatabase();
+        await init();
+    } catch (error) {
+        console.error('应用初始化失败:', error);
+        if (typeof showToast === 'function') {
+            showToast('应用初始化失败，请刷新页面重试', 6000);
         }
-    } else {
-        // 未登录：显示登录框
-        renderLoginOverlay();
     }
 });
 
-// === 全局救援手势 (三击清空全局CSS) ===
+// === 全局救援手势 (五击打开样式救援) ===
 // 将变量提升到顶层，防止混淆器错误处理闭包作用域
 let globalRescueClickCount = 0;
 let globalRescueLastClickTime = 0;
@@ -710,10 +310,65 @@ function setupGlobalRescueGesture() {
     }, true); // 使用捕获阶段，确保尽早触发
 }
 
+function getRescueChatTarget() {
+    if (typeof currentChatId === 'undefined' || typeof currentChatType === 'undefined') return null;
+    const type = currentChatType;
+    if (type !== 'private' && type !== 'group') return null;
+    const chat = (type === 'private' ? db.characters : db.groups).find(item => item.id === currentChatId);
+    return chat ? { chat, type } : null;
+}
+
+async function clearRescueCss(target = null) {
+    const label = target ? '当前聊天美化' : '全局 CSS';
+    if (!confirm(`确定要清空${label}吗？此操作不可撤销。`)) return false;
+
+    // 先解除页面样式，存储缓慢或失败也不应阻止用户脱困。
+    if (target) {
+        target.chat.customBubbleCss = '';
+        target.chat.useCustomBubbleCss = false;
+        updateCustomBubbleStyle(target.chat.id, '', false);
+        const prefix = target.type === 'private' ? 'setting-' : 'setting-group-';
+        const textarea = document.getElementById(`${prefix}custom-bubble-css`);
+        const checkbox = document.getElementById(`${prefix}use-custom-css`);
+        if (textarea) {
+            textarea.value = '';
+            textarea.disabled = true;
+        }
+        if (checkbox) checkbox.checked = false;
+        // 设置页中的预览也可能包含导致页面错乱的 CSS。
+        const preview = document.getElementById(`${target.type === 'private' ? 'private' : 'group'}-bubble-css-preview`);
+        if (preview) preview.innerHTML = '';
+    } else {
+        db.globalCss = '';
+        applyGlobalCss('');
+        const textarea = document.getElementById('global-beautification-css');
+        if (textarea) textarea.value = '';
+    }
+
+    showToast(`${label}已在当前页面清除，正在保存…`);
+    try {
+        // 只更新救援涉及的字段，保留聊天内容、其他会话和预设。
+        if (target) {
+            const table = target.type === 'private' ? dexieDB.characters : dexieDB.groups;
+            const updated = await table.update(target.chat.id, { customBubbleCss: '', useCustomBubbleCss: false });
+            if (!updated) throw new Error('聊天记录不存在');
+        } else {
+            await dexieDB.globalSettings.put({ key: 'globalCss', value: '' });
+        }
+        showToast(`${label}已清空并保存。`);
+        return true;
+    } catch (error) {
+        console.error('[StyleRescue] 保存失败:', error);
+        showToast(`${label}已在当前页面清除，但保存失败；刷新后可能恢复，请重试。`, 6000);
+        return false;
+    }
+}
+
 function showGlobalRescuePanel() {
     // 防止重复创建
     if (document.getElementById('global-rescue-panel')) return;
 
+    const target = getRescueChatTarget();
     const panel = document.createElement('div');
     panel.id = 'global-rescue-panel';
     panel.style.cssText = `
@@ -729,33 +384,35 @@ function showGlobalRescuePanel() {
             <div style="width: 60px; height: 60px; background: #ffebee; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 15px;">
                 <svg style="width: 32px; height: 32px; color: #d32f2f;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
             </div>
-            <h3 style="margin: 0 0 10px; color: #333; font-size: 18px;">全局样式救援</h3>
+            <h3 style="margin: 0 0 10px; color: #333; font-size: 18px;">样式救援</h3>
             <p style="margin: 0 0 20px; color: #666; font-size: 14px; line-height: 1.5;">
                 检测到您快速点击了五次屏幕。<br>
-                如果因为错误的全局 CSS 导致界面错乱，您可以在这里一键清空。
+                全局 CSS 与聊天美化独立生效，请清空导致界面错乱的样式。若两者都有问题，可分别清空。
             </p>
             <div style="display: flex; flex-direction: column; gap: 10px;">
-                <button id="rescue-clear-btn" style="background: #d32f2f; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">清空全局 CSS</button>
-                <button id="rescue-cancel-btn" style="background: #f5f5f5; color: #666; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">取消</button>
+                <button id="rescue-clear-btn" style="background: #d32f2f; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">仅清空全局 CSS</button>
+                ${target ? '<button id="rescue-clear-chat-btn" style="background: #d32f2f; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">清空当前聊天美化</button>' : ''}
+                <button id="rescue-cancel-btn" style="background: #f5f5f5; color: #666; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;">关闭</button>
             </div>
         </div>
     `;
 
     document.body.appendChild(panel);
 
-    document.getElementById('rescue-clear-btn').onclick = async () => {
-        if (confirm('确定要清空全局 CSS 吗？此操作不可撤销。')) {
-            db.globalCss = '';
-            await saveData();
-            applyGlobalCss('');
-            // 更新设置页面的文本框（如果存在）
-            const textarea = document.getElementById('global-beautification-css');
-            if (textarea) textarea.value = '';
-            
-            showToast('全局 CSS 已清空，界面应已恢复正常。');
-            panel.remove();
-        }
+    const bindClearButton = (id, chatTarget) => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.onclick = async () => {
+            button.disabled = true;
+            try {
+                await clearRescueCss(chatTarget);
+            } finally {
+                button.disabled = false;
+            }
+        };
     };
+    bindClearButton('rescue-clear-btn', null);
+    bindClearButton('rescue-clear-chat-btn', target);
 
     document.getElementById('rescue-cancel-btn').onclick = () => {
         panel.remove();

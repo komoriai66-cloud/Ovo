@@ -64,6 +64,7 @@ const TTSSettings = {
                 if (apiKeyInput) apiKeyInput.value = config.apiKey || '';
                 if (domainSelect) domainSelect.value = config.domain || 'api.minimaxi.chat';
                 if (modelSelect) modelSelect.value = config.model || 'speech-2.8-hd';
+                this.loadVolcengineFields('char', config);
 
                 const userConfig = MinimaxTTSService.userConfig;
                 const userEnabledInput = document.getElementById('minimax-user-tts-enabled');
@@ -84,6 +85,7 @@ const TTSSettings = {
                 if (userApiKeyInput) userApiKeyInput.value = userConfig.apiKey || '';
                 if (userDomainSelect) userDomainSelect.value = userConfig.domain || 'api.minimaxi.chat';
                 if (userModelSelect) userModelSelect.value = userConfig.model || 'speech-2.8-hd';
+                this.loadVolcengineFields('user', userConfig);
             } catch (err) {
                 console.error('[TTSSettings] 加载设置失败:', err);
             }
@@ -92,8 +94,37 @@ const TTSSettings = {
         toggleProviderConfig: function(type, provider) {
             const prefix = type === 'user' ? 'minimax-user-' : 'minimax-';
             const minimaxWrap = document.getElementById(`${prefix}tts-config-wrap`);
+            const volcWrap = document.getElementById(type === 'user' ? 'volcengine-user-tts-config-wrap' : 'volcengine-tts-config-wrap');
+            if (minimaxWrap) minimaxWrap.style.display = provider === 'volcengine' ? 'none' : 'block';
+            if (volcWrap) volcWrap.style.display = provider === 'volcengine' ? 'block' : 'none';
+        },
 
-            if (minimaxWrap) minimaxWrap.style.display = 'block';
+        loadVolcengineFields: function(type, config) {
+            const prefix = type === 'user' ? 'volcengine-user-' : 'volcengine-';
+            const values = {
+                'app-id': config.volcAppId || '',
+                'access-token': config.volcAccessToken || '',
+                'resource-id': config.volcResourceId || 'seed-tts-2.0',
+                'voice-type': config.volcVoiceType || '',
+                'tts-url': config.volcUrl || 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+                'audio-format': config.volcFormat || 'mp3'
+            };
+            Object.entries(values).forEach(([suffix, value]) => {
+                const element = document.getElementById(prefix + suffix);
+                if (element) element.value = value;
+            });
+        },
+
+        readVolcengineFields: function(type) {
+            const prefix = type === 'user' ? 'volcengine-user-' : 'volcengine-';
+            const read = suffix => document.getElementById(prefix + suffix)?.value?.trim() || '';
+            return {
+                volcAppId: read('app-id'), volcAccessToken: read('access-token'),
+                volcResourceId: read('resource-id') || 'seed-tts-2.0',
+                volcVoiceType: read('voice-type'),
+                volcUrl: read('tts-url') || 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+                volcFormat: read('audio-format') || 'mp3'
+            };
         },
 
         // 保存 TTS 全局配置（角色 + 用户）
@@ -112,17 +143,20 @@ const TTSSettings = {
                     groupId: groupIdInput?.value?.trim() || '',
                     apiKey: apiKeyInput?.value?.trim() || '',
                     domain: domainSelect?.value || 'api.minimaxi.chat',
-                    model: modelSelect?.value || 'speech-2.8-hd'
+                    model: modelSelect?.value || 'speech-2.8-hd',
+                    ...this.readVolcengineFields('char')
                 };
                 
                 if (config.enabled) {
                     if (config.provider === 'minimax' && (!config.groupId || !config.apiKey)) {
                         showToast('请填写完整的角色 Minimax TTS GroupId 和 API Key');
-                        return;
+                        return false;
+                    }
+                    if (config.provider === 'volcengine' && (!config.volcAppId || !config.volcAccessToken || !config.volcResourceId || !config.volcVoiceType || !config.volcUrl)) {
+                        showToast('请填写完整的角色火山语音配置');
+                        return false;
                     }
                 }
-                MinimaxTTSService.saveConfig(config);
-    
                 const userEnabledInput = document.getElementById('minimax-user-tts-enabled');
                 const userProviderSelect = document.getElementById('user-tts-provider');
                 const userGroupIdInput = document.getElementById('minimax-user-group-id');
@@ -136,21 +170,29 @@ const TTSSettings = {
                     groupId: userGroupIdInput?.value?.trim() || '',
                     apiKey: userApiKeyInput?.value?.trim() || '',
                     domain: userDomainSelect?.value || 'api.minimaxi.chat',
-                    model: userModelSelect?.value || 'speech-2.8-hd'
+                    model: userModelSelect?.value || 'speech-2.8-hd',
+                    ...this.readVolcengineFields('user')
                 };
 
                 if (userConfig.enabled) {
                     if (userConfig.provider === 'minimax' && (!userConfig.groupId || !userConfig.apiKey)) {
                         showToast('请填写完整的用户 Minimax TTS GroupId 和 API Key');
-                        return;
+                        return false;
+                    }
+                    if (userConfig.provider === 'volcengine' && (!userConfig.volcAppId || !userConfig.volcAccessToken || !userConfig.volcResourceId || !userConfig.volcVoiceType || !userConfig.volcUrl)) {
+                        showToast('请填写完整的用户火山语音配置');
+                        return false;
                     }
                 }
+                MinimaxTTSService.saveConfig(config);
                 MinimaxTTSService.saveUserConfig(userConfig);
     
                 showToast('TTS 配置已保存');
+                return true;
             } catch (err) {
                 console.error('[TTSSettings] 保存配置失败:', err);
                 showToast('保存失败');
+                return false;
             }
         },
 
@@ -158,7 +200,7 @@ const TTSSettings = {
     testTTS: async function() {
         try {
             // 先保存配置
-            this.saveTTSConfig();
+            if (!this.saveTTSConfig()) return;
 
             // 检查配置
             if (!MinimaxTTSService.isConfigured()) {

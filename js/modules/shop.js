@@ -650,6 +650,14 @@ async function fetchShopData() {
     const chat = db.characters.find(c => c.id === currentChatId);
     if (!chat) return; // 应该不会发生
 
+    if (chat.memoryMode === 'vector' && typeof prepareVectorMemoryContext === 'function') {
+        try {
+            await prepareVectorMemoryContext(chat);
+        } catch (error) {
+            console.warn('[VectorMemory] shop context fallback:', error);
+        }
+    }
+
     const contextPrompt = generatePrivateSystemPrompt(chat);
 
     // 截取最近 100 条消息作为参考
@@ -731,7 +739,8 @@ async function fetchShopData() {
     `;
 
     // 调用 API
-    let { url, key, model, provider } = db.apiSettings;
+    const shopApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('shop', db.apiSettings) : db.apiSettings;
+    let { url, key, model, provider } = shopApiConfig;
     
     // 兼容 Gemini 和其他 OpenAI 格式接口
     let requestBody, endpoint, headers;
@@ -764,7 +773,7 @@ async function fetchShopData() {
         };
     }
 
-    let content = await fetchAiResponse(db.apiSettings, requestBody, headers, endpoint);
+    let content = await fetchAiResponse(shopApiConfig, requestBody, headers, endpoint);
 
     // 清洗 JSON
     content = content.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -888,7 +897,7 @@ function openCartDeliveryModal() {
 }
 
 // 确认购买
-function confirmPurchase() {
+async function confirmPurchase() {
     if (shopState.cart.length === 0) return;
 
     // 获取当前角色信息
@@ -950,40 +959,21 @@ function confirmPurchase() {
         } else if (db.piggyBank && db.piggyBank.receivedFamilyCards) {
             const card = db.piggyBank.receivedFamilyCards.find(c => c.id === shopPayMethod);
             if (card) {
-                card.usedAmount = (card.usedAmount || 0) + totalPrice;
-                if (!card.transactions) card.transactions = [];
-                card.transactions.unshift({ id: 'rfct_' + Date.now(), amount: totalPrice, scene: '商城', detail: itemsStr, targetName: realName || '', time: Date.now() });
-
-                // 触发角色通知和钱包账单
-                const fromChar = db.characters.find(c => c.id === card.fromCharId);
-                if (fromChar) {
-                    if (!fromChar.peekData) fromChar.peekData = {};
-                    if (!fromChar.peekData.wallet) fromChar.peekData.wallet = { balance: Math.floor(Math.random() * 10000), income: [], expense: [], summary: '本月支出较多' };
-                    if (!fromChar.peekData.wallet.expense) fromChar.peekData.wallet.expense = [];
-                    fromChar.peekData.wallet.expense.unshift({
+                if (window.WalletSystem && typeof window.WalletSystem.chargeReceivedFamilyCard === 'function') {
+                    const chargeResult = await window.WalletSystem.chargeReceivedFamilyCard(card.id, {
                         amount: totalPrice,
-                        time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-                        remark: `亲属卡消费：购买了 ${itemsStr}`
+                        scene: '商城',
+                        detail: `购买“${itemsStr}”`,
+                        targetName: realName || ''
                     });
-                    
-                    if (fromChar.familyCardEnabled) {
-                        const notice = `[系统情景通知：你给${myName}的亲属卡刚刚产生了一笔 ${totalPrice.toFixed(2)} 元的消费，用途是：在商城购买了“${itemsStr}”。请根据你的人设和你们现在的关系，在下一次回复中自然地对此作出反应或询问。]`;
-                        fromChar.history.push({
-                            id: 'msg_sys_' + Date.now(),
-                            role: 'system',
-                            content: notice,
-                            timestamp: Date.now()
-                        });
-                        setTimeout(() => {
-                            if (typeof currentChatId !== 'undefined' && currentChatId === fromChar.id && typeof currentChatType !== 'undefined' && currentChatType === 'private') {
-                                if (typeof renderChatList === 'function') renderChatList();
-                                if (typeof getAiReply === 'function') getAiReply(currentChatId, currentChatType, true);
-                            }
-                        }, 500);
+                    if (!chargeResult.ok) {
+                        if (typeof showToast === 'function') showToast(chargeResult.reason || '亲属卡支付失败');
+                        return;
                     }
                 }
             }
         }
+        if (window.WalletSystem && typeof window.WalletSystem.persist === 'function') await window.WalletSystem.persist();
     }
 
     // 格式生成

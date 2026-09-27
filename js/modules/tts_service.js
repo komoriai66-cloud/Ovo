@@ -1,5 +1,5 @@
 // js/modules/tts_service.js
-// Minimax TTS 语音合成服务
+// 多提供商 TTS 语音合成服务（保留 MinimaxTTSService 全局别名兼容旧调用）
 // language_boost 取值见官方文档: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http
 
 const LANGUAGE_BOOST_MAP = {
@@ -24,7 +24,7 @@ const LANGUAGE_BOOST_MAP = {
     pl: 'Polish'
 };
 
-const MinimaxTTSService = {
+const TTSService = {
     // 角色 TTS 配置（从 localStorage 加载）
     config: {
         enabled: false,
@@ -33,7 +33,13 @@ const MinimaxTTSService = {
         groupId: '',
         apiKey: '',
         domain: 'api.minimaxi.chat',
-        model: 'speech-2.8-hd'
+        model: 'speech-2.8-hd',
+        volcAppId: '',
+        volcAccessToken: '',
+        volcResourceId: 'seed-tts-2.0',
+        volcVoiceType: '',
+        volcUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+        volcFormat: 'mp3'
     },
 
     // 用户 TTS 配置（独立存储）
@@ -44,7 +50,13 @@ const MinimaxTTSService = {
         groupId: '',
         apiKey: '',
         domain: 'api.minimaxi.chat',
-        model: 'speech-2.8-hd'
+        model: 'speech-2.8-hd',
+        volcAppId: '',
+        volcAccessToken: '',
+        volcResourceId: 'seed-tts-2.0',
+        volcVoiceType: '',
+        volcUrl: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+        volcFormat: 'mp3'
     },
 
     // 音频缓存 (文本+音色ID作为key，用户缓存加 user_ 前缀)
@@ -105,7 +117,7 @@ const MinimaxTTSService = {
     init: function() {
         this.loadConfig();
         this.loadUserConfig();
-        console.log('[TTS] 服务已初始化', this.config);
+        console.log('[TTS] 服务已初始化', { provider: this.config.provider, enabled: this.config.enabled });
     },
 
     // 加载角色 TTS 配置
@@ -139,7 +151,7 @@ const MinimaxTTSService = {
         try {
             this.config = { ...this.config, ...newConfig };
             localStorage.setItem('minimax_tts_config', JSON.stringify(this.config));
-            console.log('[TTS] 配置已保存', this.config);
+            console.log('[TTS] 配置已保存', { provider: this.config.provider, enabled: this.config.enabled });
             return true;
         } catch (err) {
             console.error('[TTS] 保存配置失败:', err);
@@ -152,7 +164,7 @@ const MinimaxTTSService = {
         try {
             this.userConfig = { ...this.userConfig, ...newConfig };
             localStorage.setItem('minimax_user_tts_config', JSON.stringify(this.userConfig));
-            console.log('[TTS] 用户配置已保存', this.userConfig);
+            console.log('[TTS] 用户配置已保存', { provider: this.userConfig.provider, enabled: this.userConfig.enabled });
             return true;
         } catch (err) {
             console.error('[TTS] 保存用户配置失败:', err);
@@ -163,12 +175,14 @@ const MinimaxTTSService = {
     // 检查角色 TTS 配置是否完整
     isConfigured: function() {
         if (!this.config.enabled) return false;
+        if (this.config.provider === 'volcengine') return !!(this.config.volcAppId && this.config.volcAccessToken && this.config.volcResourceId && this.config.volcVoiceType && this.config.volcUrl);
         return !!(this.config.groupId && this.config.apiKey);
     },
 
     // 检查用户 TTS 配置是否完整（仅当启用时要求配置）
     isUserConfigured: function() {
         if (!this.userConfig.enabled) return false;
+        if (this.userConfig.provider === 'volcengine') return !!(this.userConfig.volcAppId && this.userConfig.volcAccessToken && this.userConfig.volcResourceId && this.userConfig.volcVoiceType && this.userConfig.volcUrl);
         return !!(this.userConfig.groupId && this.userConfig.apiKey);
     },
 
@@ -208,8 +222,11 @@ const MinimaxTTSService = {
         try {
             let audioUrl;
             
-            // 默认使用 Minimax TTS 服务
-            const url = `https://${cfg.domain}/v1/t2a_v2?GroupId=${encodeURIComponent(cfg.groupId)}`;
+            if (provider === 'volcengine') {
+                audioUrl = await this._synthesizeVolcengine(cleanText, voiceId, language, speed, cfg);
+            } else {
+                // 默认使用 Minimax TTS 服务
+                const url = `https://${cfg.domain}/v1/t2a_v2?GroupId=${encodeURIComponent(cfg.groupId)}`;
                 const requestBody = {
                     model: cfg.model,
                     text: cleanText,
@@ -263,6 +280,7 @@ const MinimaxTTSService = {
                 const audioData = result.data.audio;
                 const blob = this.hexToBlob(audioData, 'audio/mpeg');
                 audioUrl = URL.createObjectURL(blob);
+            }
 
             // 存入缓存
             this.audioCache.set(cacheKey, audioUrl);
@@ -282,6 +300,83 @@ const MinimaxTTSService = {
             console.error('[TTS] 合成失败:', err);
             throw err;
         }
+    },
+
+    _synthesizeVolcengine: async function(text, voiceId, language, speed, cfg) {
+        const requestId = (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
+            ? globalThis.crypto.randomUUID()
+            : `ovo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const format = cfg.volcFormat || 'mp3';
+        const isMinimaxPreset = Array.isArray(globalThis.VoiceSelector?.voices)
+            && globalThis.VoiceSelector.voices.some(item => item.id === voiceId);
+        const selectedVoice = (voiceId && !isMinimaxPreset) ? voiceId : cfg.volcVoiceType;
+        if (!selectedVoice) throw new Error('火山语音音色 ID 未配置');
+        const body = {
+            user: { uid: 'ovo-browser-user' },
+            req_params: {
+                text,
+                speaker: selectedVoice,
+                audio_params: {
+                    format,
+                    sample_rate: 24000,
+                    speech_rate: Math.round((Math.min(2, Math.max(0.5, Number(speed) || 1)) - 1) * 100),
+                    loudness_rate: 0
+                },
+                additions: JSON.stringify({ disable_markdown_filter: true, enable_language_detector: language === 'auto' })
+            }
+        };
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Api-App-Key': cfg.volcAppId,
+            'X-Api-Access-Key': cfg.volcAccessToken,
+            'X-Api-Resource-Id': cfg.volcResourceId,
+            'X-Api-Request-Id': requestId
+        };
+        const response = await fetch(cfg.volcUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+        if (!response.ok) {
+            const detail = (await response.text()).slice(0, 240);
+            const logId = response.headers.get('x-tt-logid');
+            const trace = logId ? `（请求 ID：${logId}）` : '';
+            if (response.status === 401 || response.status === 403) throw new Error(`火山语音鉴权失败，请检查 App ID、Access Token 和 Resource ID${trace}`);
+            if (response.status === 429) throw new Error('火山语音请求过于频繁，请稍后再试');
+            throw new Error(`火山语音请求失败 (${response.status})${detail ? `：${detail}` : ''}${trace}`);
+        }
+        const contentType = response.headers.get('content-type') || '';
+        let blob;
+        if (contentType.includes('json') || contentType.includes('text/') || !contentType) {
+            const textResponse = await response.text();
+            const chunks = [];
+            let lastMessage = '';
+            for (const line of textResponse.split(/\r?\n/)) {
+                const payload = line.trim().replace(/^data:\s*/, '');
+                if (!payload || payload === '[DONE]') continue;
+                try {
+                    const item = JSON.parse(payload);
+                    if (item.message) lastMessage = item.message;
+                    if (item.data) chunks.push(new Uint8Array(await this.base64ToBlob(item.data).arrayBuffer()));
+                } catch (_) {}
+            }
+            if (!chunks.length) {
+                try {
+                    const item = JSON.parse(textResponse);
+                    if (item.data) chunks.push(new Uint8Array(await this.base64ToBlob(item.data).arrayBuffer()));
+                    lastMessage = item.message || lastMessage;
+                } catch (_) {}
+            }
+            if (!chunks.length) {
+                const message = lastMessage || '未返回音频数据';
+                if (/grant|authenticate|access denied|resource.*mismatch/i.test(message)) throw new Error(`火山语音权限或鉴权失败：${message}`);
+                if (/quota|concurrency/i.test(message)) throw new Error(`火山语音额度或并发不足：${message}`);
+                if (/voice|speaker|音色/i.test(message)) throw new Error(`火山语音音色不可用：${message}`);
+                throw new Error(`火山语音合成失败：${message}`);
+            }
+            const mime = { mp3: 'audio/mpeg', ogg_opus: 'audio/ogg', wav: 'audio/wav', pcm: 'audio/pcm' }[format] || 'audio/mpeg';
+            blob = new Blob(chunks, { type: mime });
+        } else {
+            blob = await response.blob();
+        }
+        if (format === 'pcm') blob = await this.pcmToWavBlob(blob, 24000, 1, 16);
+        return URL.createObjectURL(blob);
     },
 
     // 播放音频。playKey 为可选，用于标识当前播放（如消息 id），便于聊天页暂停/恢复
@@ -486,6 +581,29 @@ const MinimaxTTSService = {
         }
     },
 
+    // 浏览器不能直接播放裸 PCM，补齐 WAV 文件头后再播放或下载
+    pcmToWavBlob: async function(pcmBlob, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
+        const pcm = new Uint8Array(await pcmBlob.arrayBuffer());
+        const header = new ArrayBuffer(44);
+        const view = new DataView(header);
+        const write = (offset, text) => { for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i)); };
+        const byteRate = sampleRate * channels * bitsPerSample / 8;
+        write(0, 'RIFF');
+        view.setUint32(4, 36 + pcm.byteLength, true);
+        write(8, 'WAVE');
+        write(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, channels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, channels * bitsPerSample / 8, true);
+        view.setUint16(34, bitsPerSample, true);
+        write(36, 'data');
+        view.setUint32(40, pcm.byteLength, true);
+        return new Blob([header, pcm], { type: 'audio/wav' });
+    },
+
     // 下载语音文件
     download: async function(text, voiceId, language, options = {}) {
         try {
@@ -500,7 +618,8 @@ const MinimaxTTSService = {
                 String(now.getHours()).padStart(2, '0') +
                 String(now.getMinutes()).padStart(2, '0') +
                 String(now.getSeconds()).padStart(2, '0');
-            const filename = '语音_' + ts + '.mp3';
+            const extension = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('wav') ? 'wav' : 'mp3';
+            const filename = '语音_' + ts + '.' + extension;
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = filename;
@@ -526,17 +645,19 @@ const MinimaxTTSService = {
     }
 };
 
-// 导出全局变量
-window.MinimaxTTSService = MinimaxTTSService;
+// 导出统一名称，并保留旧名称供现有聊天、通话和插件调用
+const MinimaxTTSService = TTSService;
+window.TTSService = TTSService;
+window.MinimaxTTSService = TTSService;
 
 // 页面加载时初始化
 if (typeof window !== 'undefined') {
     // 延迟初始化，确保 DOM 和其他依赖已加载
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
-            MinimaxTTSService.init();
+            TTSService.init();
         });
     } else {
-        MinimaxTTSService.init();
+        TTSService.init();
     }
 }

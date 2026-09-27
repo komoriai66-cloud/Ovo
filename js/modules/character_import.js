@@ -21,6 +21,7 @@ function setupAddCharModal() {
             maxMemory: 100,
             chatBg: '',
             history: [],
+            pokeEnabled: false,
             isPinned: false,
             status: '在线',
             worldBookIds: [],
@@ -47,11 +48,30 @@ function setupAddCharModal() {
                 interval: 60,
                 lastTriggerTime: 0
             },
+            followUpReply: {
+                enabled: false,
+                delayMode: 'random',
+                fixedDelayMinutes: 120,
+                minDelayMinutes: 60,
+                maxDelayMinutes: 180,
+                probability: 35,
+                maxFollowUps: 1,
+                pending: null,
+                lastSuccessAt: 0,
+                lastDecision: null
+            },
             userAvatarLibrary: [],
             charAvatarLibrary: [],
+            avatarSystemEnabled: false,
+            charSenseAvatarChangeEnabled: false,
+            charCanSwitchAvatarEnabled: false,
             charCollectImageAsAvatarEnabled: false,
             coupleAvatarLibrary: [],
             charCollectCoupleAvatarEnabled: false,
+            charSenseCoupleAvatarEnabled: false,
+            activeCoupleAvatarId: null,
+            avatarRelationshipHistory: [],
+            showAvatarActionMsg: false,
             phoneControlEnabled: false,
             phoneControlViewLimit: 10,
             phoneControlHistory: []
@@ -238,11 +258,30 @@ async function createCharacterFromData(data, avatar, options) {
             interval: 60,
             lastTriggerTime: 0
         },
+        followUpReply: {
+            enabled: false,
+            delayMode: 'random',
+            fixedDelayMinutes: 120,
+            minDelayMinutes: 60,
+            maxDelayMinutes: 180,
+            probability: 35,
+            maxFollowUps: 1,
+            pending: null,
+            lastSuccessAt: 0,
+            lastDecision: null
+        },
         userAvatarLibrary: [],
         charAvatarLibrary: [],
+        avatarSystemEnabled: false,
+        charSenseAvatarChangeEnabled: false,
+        charCanSwitchAvatarEnabled: false,
         charCollectImageAsAvatarEnabled: false,
         coupleAvatarLibrary: [],
-        charCollectCoupleAvatarEnabled: false
+        charCollectCoupleAvatarEnabled: false,
+        charSenseCoupleAvatarEnabled: false,
+        activeCoupleAvatarId: null,
+        avatarRelationshipHistory: [],
+        showAvatarActionMsg: false
     };
 
     // 解析开场白：仅在用户选择导入时处理；优先 data.alternate_greetings，否则用 first_mes

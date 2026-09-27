@@ -7,6 +7,339 @@
 
 const FAMILY_CARD_COLORS = ['#1a1a2e', '#16213e', '#0f3460', '#2d132c', '#1b262c', '#2c3e50'];
 
+function ensurePiggyBankState() {
+    if (!db.piggyBank) db.piggyBank = { balance: 520, transactions: [], familyCards: [], receivedFamilyCards: [] };
+    if (!Array.isArray(db.piggyBank.transactions)) db.piggyBank.transactions = [];
+    if (!Array.isArray(db.piggyBank.familyCards)) db.piggyBank.familyCards = [];
+    if (!Array.isArray(db.piggyBank.receivedFamilyCards)) db.piggyBank.receivedFamilyCards = [];
+    if (!Array.isArray(db.piggyBank.orders)) db.piggyBank.orders = [];
+    if (!Array.isArray(db.piggyBank.events)) db.piggyBank.events = [];
+    if (!db.piggyBank.familyCardNarrationMode) db.piggyBank.familyCardNarrationMode = 'detailed';
+    db.piggyBank.schemaVersion = Math.max(2, Number(db.piggyBank.schemaVersion) || 0);
+    return db.piggyBank;
+}
+
+function walletMoney(value) {
+    return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function ensureCharacterWalletLedger(character) {
+    if (!character.walletLedger || typeof character.walletLedger !== 'object') {
+        let detectedBalance = null;
+        const sourceBalance = character.peekData?.wallet?.summary?.balance ?? character.peekData?.wallet?.balance;
+        const numericMatch = String(sourceBalance ?? '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+        if (numericMatch) detectedBalance = walletMoney(numericMatch[0]);
+        character.walletLedger = { balance: detectedBalance, transactions: [] };
+    }
+    if (!Array.isArray(character.walletLedger.transactions)) character.walletLedger.transactions = [];
+    return character.walletLedger;
+}
+
+async function persistWalletState(characterIds = []) {
+    ensurePiggyBankState();
+    const ids = Array.from(new Set((characterIds || []).filter(Boolean)));
+    try {
+        if (typeof dexieDB !== 'undefined' && dexieDB?.globalSettings && dexieDB?.characters && typeof dexieDB.transaction === 'function') {
+            await dexieDB.transaction('rw', dexieDB.globalSettings, dexieDB.characters, async () => {
+                await dexieDB.globalSettings.put({ key: 'piggyBank', value: db.piggyBank });
+                for (const id of ids) {
+                    const character = (db.characters || []).find(item => item.id === id);
+                    if (character) await dexieDB.characters.put(character);
+                }
+            });
+            return true;
+        }
+        if (typeof saveGlobalSettings === 'function') await saveGlobalSettings(['piggyBank']);
+        for (const id of ids) {
+            if (typeof saveCharacter === 'function') await saveCharacter(id);
+        }
+        return true;
+    } catch (error) {
+        console.error('[WalletSystem] 持久化失败:', error);
+        if (typeof showToast === 'function') showToast('钱包数据保存失败，请稍后重试', 5000);
+        return false;
+    }
+}
+
+function addFamilyCardEvent(character, card, details) {
+    const bank = ensurePiggyBankState();
+    const eventId = details.eventId || `fce_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if (bank.events.some(event => event.id === eventId)) return eventId;
+    const amount = walletMoney(details.amount);
+    const itemText = details.detail || details.scene || '消费';
+    bank.events.unshift({
+        id: eventId,
+        type: details.type || 'family_card_charge',
+        cardId: card.id,
+        characterId: character.id,
+        amount,
+        scene: details.scene || '',
+        detail: itemText,
+        time: details.time || Date.now()
+    });
+    bank.events = bank.events.slice(0, 500);
+
+    if (!Array.isArray(character.history)) character.history = [];
+    const remaining = Math.max(0, walletMoney(card.limit - (card.usedAmount || 0)));
+    character.history.push({
+        id: `msg_sys_${eventId}`,
+        role: 'system',
+        content: `[系统情景通知：${character.myName || '用户'}刚刚使用你赠送的亲属卡消费了 ${amount.toFixed(2)} 元，用途是：${itemText}。当前剩余额度 ${remaining.toFixed(2)} 元。你已经知道这件事，可在之后合适的正常聊天或原本触发的后台消息中根据人设自然反应，不要机械报账。]`,
+        timestamp: details.time || Date.now(),
+        isFamilyCardEvent: true,
+        familyCardEventId: eventId
+    });
+
+    const narrationMode = bank.familyCardNarrationMode || 'detailed';
+    if (narrationMode !== 'none') {
+        const narration = narrationMode === 'brief'
+            ? `你使用了${character.realName || character.remarkName || 'TA'}的亲属卡。`
+            : `你使用了${character.realName || character.remarkName || 'TA'}的亲属卡支付 ¥${amount.toFixed(2)}，用于${itemText}，剩余额度 ¥${remaining.toFixed(2)}。`;
+        character.history.push({
+            id: `msg_narration_${eventId}`,
+            role: 'system',
+            content: `[system-display:${narration}]`,
+            timestamp: (details.time || Date.now()) + 1,
+            isFamilyCardNarration: true,
+            excludeFromContext: true,
+            familyCardEventId: eventId
+        });
+    }
+    return eventId;
+}
+
+async function chargeReceivedFamilyCard(cardId, details = {}) {
+    const bank = ensurePiggyBankState();
+    refreshFamilyCardLimits();
+    const card = bank.receivedFamilyCards.find(item => item.id === cardId);
+    const amount = walletMoney(details.amount);
+    if (!card || card.status !== 'active') return { ok: false, reason: '亲属卡当前不可用' };
+    if (!(amount > 0)) return { ok: false, reason: '消费金额无效' };
+    const remaining = walletMoney(card.limit - (card.usedAmount || 0));
+    if (remaining < amount) return { ok: false, reason: '亲属卡额度不足' };
+    const previousCardUsed = card.usedAmount || 0;
+    const previousCardTransactionsLength = Array.isArray(card.transactions) ? card.transactions.length : 0;
+    const previousEventsLength = bank.events.length;
+
+    const eventId = details.eventId || `charge_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if ((card.transactions || []).some(item => item.eventId === eventId)) return { ok: true, duplicate: true, card };
+    card.usedAmount = walletMoney((card.usedAmount || 0) + amount);
+    if (!Array.isArray(card.transactions)) card.transactions = [];
+    card.transactions.unshift({
+        id: `rfct_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        eventId,
+        amount,
+        scene: details.scene || '消费',
+        detail: details.detail || '',
+        targetName: details.targetName || '',
+        time: details.time || Date.now()
+    });
+
+    const character = (db.characters || []).find(item => item.id === card.fromCharId);
+    const previousHistoryLength = character && Array.isArray(character.history) ? character.history.length : 0;
+    let previousLedgerBalance = null;
+    let previousLedgerTransactionsLength = 0;
+    if (character) {
+        const ledger = ensureCharacterWalletLedger(character);
+        previousLedgerBalance = ledger.balance;
+        previousLedgerTransactionsLength = ledger.transactions.length;
+        ledger.transactions.unshift({
+            id: `cwt_${eventId}`,
+            eventId,
+            type: 'expense',
+            amount,
+            source: 'family_card',
+            remark: `亲属卡支出：${details.detail || details.scene || '消费'}`,
+            time: details.time || Date.now()
+        });
+        if (typeof ledger.balance === 'number') ledger.balance = walletMoney(ledger.balance - amount);
+        addFamilyCardEvent(character, card, { ...details, eventId, amount });
+    }
+    const persisted = await persistWalletState(character ? [character.id] : []);
+    if (!persisted) {
+        card.usedAmount = previousCardUsed;
+        card.transactions.splice(0, Math.max(0, card.transactions.length - previousCardTransactionsLength));
+        bank.events.splice(0, Math.max(0, bank.events.length - previousEventsLength));
+        if (character) {
+            character.history.splice(previousHistoryLength);
+            const ledger = ensureCharacterWalletLedger(character);
+            ledger.balance = previousLedgerBalance;
+            ledger.transactions.splice(0, Math.max(0, ledger.transactions.length - previousLedgerTransactionsLength));
+        }
+        return { ok: false, reason: '钱包数据未能安全保存，本次未扣款' };
+    }
+    if (character && typeof renderChatList === 'function') renderChatList();
+    if (character && typeof currentChatId !== 'undefined' && currentChatId === character.id && currentChatType === 'private' && typeof renderMessages === 'function') {
+        renderMessages(false, true);
+    }
+    return { ok: true, card, eventId };
+}
+
+function respondToIssuedFamilyCard(character, action) {
+    const pendingMessage = [...(character.history || [])].reverse().find(message => message.role === 'user' && message.familyCardId && message.familyCardStatus === 'pending');
+    if (!pendingMessage) return null;
+    const card = ensurePiggyBankState().familyCards.find(item => item.id === pendingMessage.familyCardId);
+    pendingMessage.familyCardStatus = action === 'accept' ? 'accepted' : 'returned';
+    if (card) {
+        card.status = action === 'accept' ? 'active' : 'returned';
+        card.statusChangedBy = 'character';
+        card.statusChangedAt = Date.now();
+    }
+    return card;
+}
+
+function respondToReceivedFamilyCard(character, message, action) {
+    const bank = ensurePiggyBankState();
+    const card = bank.receivedFamilyCards.find(item => item.id === message.receivedFamilyCardId);
+    if (!card) return null;
+    if (action === 'accept') {
+        bank.receivedFamilyCards.forEach(item => {
+            if (item.id !== card.id && item.fromCharId === character.id && item.status === 'active') {
+                item.status = 'replaced';
+                item.statusChangedBy = 'system_replaced';
+                item.statusChangedAt = Date.now();
+            }
+        });
+        card.status = 'active';
+    } else {
+        card.status = 'returned';
+    }
+    card.statusChangedBy = 'user';
+    card.statusChangedAt = Date.now();
+    return card;
+}
+
+function processFamilyCardActionMessage(message, character) {
+    if (!message || !character || message.familyCardActionProcessed) return false;
+    const content = String(message.content || '');
+    let changed = false;
+    if (message.role === 'assistant') {
+        const responseMatch = content.match(/\[(.*?)(接收|退还)(.*?)的亲属卡\]/);
+        if (responseMatch && responseMatch[1].trim() === String(character.realName || '').trim()) {
+            changed = !!respondToIssuedFamilyCard(character, responseMatch[2] === '接收' ? 'accept' : 'return') || changed;
+        }
+
+        const bank = ensurePiggyBankState();
+        const issuedCard = [...bank.receivedFamilyCards].reverse().find(card => card.fromCharId === character.id && ['pending', 'active', 'frozen'].includes(card.status));
+        if (issuedCard) {
+            let issuedChanged = false;
+            if (new RegExp(`\\[${String(character.realName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}冻结了亲属卡\\]`).test(content)) {
+                issuedCard.status = 'frozen'; issuedChanged = true;
+            } else if (new RegExp(`\\[${String(character.realName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}解冻了亲属卡\\]`).test(content)) {
+                issuedCard.status = 'active'; issuedChanged = true;
+            } else if (new RegExp(`\\[${String(character.realName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}收回了亲属卡\\]`).test(content)) {
+                issuedCard.status = 'revoked'; issuedChanged = true;
+            } else {
+                const adjustMatch = content.match(new RegExp(`\\[${String(character.realName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}调整亲属卡额度为[：:]([\\d.,]+)元\\]`));
+                if (adjustMatch) {
+                    issuedCard.limit = Math.max(0, walletMoney(String(adjustMatch[1]).replace(',', '.')));
+                    issuedChanged = true;
+                }
+            }
+            if (issuedChanged) {
+                issuedCard.statusChangedBy = 'character';
+                issuedCard.statusChangedAt = Date.now();
+                const sourceMessage = [...(character.history || [])].reverse().find(item => item.receivedFamilyCardId === issuedCard.id);
+                if (sourceMessage) sourceMessage.receivedFamilyCardStatus = issuedCard.status === 'active' ? 'accepted' : issuedCard.status;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        message.familyCardActionProcessed = true;
+        void persistWalletState([character.id]);
+        if (typeof currentChatId !== 'undefined' && currentChatId === character.id && typeof currentChatType !== 'undefined' && currentChatType === 'private'
+            && typeof document !== 'undefined' && document.visibilityState === 'visible' && typeof renderMessages === 'function') {
+            setTimeout(() => renderMessages(false, false), 0);
+        }
+    }
+    return changed;
+}
+
+async function executeCharacterPurchase(character, message) {
+    const content = String(message.content || '');
+    const orderMatch = content.match(/\[(.*?)为(.*?)下单了[：:](.*?)\|([\d.,]+)\|([\s\S]*?)\]/);
+    if (!orderMatch || orderMatch[1].trim() !== String(character.realName || '').trim()) return null;
+    const recipientName = orderMatch[2].trim();
+    const isSelfPurchase = recipientName === '自己' || recipientName === character.realName || recipientName === character.remarkName;
+    if (isSelfPurchase && !character.autonomousShoppingEnabled) return { ok: false, reason: '角色自主购物未开启' };
+    if (isSelfPurchase && character.characterSelfShoppingEnabled === false) return { ok: false, reason: '角色给自己购物未开启' };
+    if (!isSelfPurchase && character.shopInteractionEnabled === false) return { ok: false, reason: '商城互动未开启' };
+    if (!isSelfPurchase && character.characterGiftShoppingEnabled === false) return { ok: false, reason: '角色给用户购物未开启' };
+
+    const amount = walletMoney(String(orderMatch[4]).replace(',', '.'));
+    const singleLimit = Math.max(0, Number(character.characterShoppingSingleLimit) || 0);
+    if (!(amount > 0)) return { ok: false, reason: '订单金额无效' };
+    if (isSelfPurchase && singleLimit > 0 && amount > singleLimit) return { ok: false, reason: '超过角色单笔消费上限' };
+    let items = orderMatch[5].trim();
+    const familyCardPay = /[；;]\s*支付方式[：:]\s*(?:用户)?亲属卡\s*$/i.test(items);
+    items = items.replace(/[；;]\s*支付方式[：:]\s*(?:用户)?亲属卡\s*$/i, '').trim();
+    if (familyCardPay && !character.characterFamilyCardSpendingEnabled) return { ok: false, reason: '角色使用用户亲属卡的权限未开启' };
+    if (!familyCardPay && character.characterOwnWalletShoppingEnabled === false) return { ok: false, reason: '角色钱包购物未开启' };
+    const bank = ensurePiggyBankState();
+    const bankSnapshot = JSON.parse(JSON.stringify(bank));
+    const walletSnapshot = character.walletLedger ? JSON.parse(JSON.stringify(character.walletLedger)) : null;
+    const now = Date.now();
+    const recentOrders = bank.orders.filter(order => order.buyerType === 'character' && order.buyerId === character.id && order.status === 'paid');
+    const periodStart = now - 30 * 24 * 60 * 60 * 1000;
+    const periodSpent = recentOrders.filter(order => order.time >= periodStart).reduce((sum, order) => sum + (Number(order.amount) || 0), 0);
+    const periodBudget = Math.max(0, Number(character.characterShoppingPeriodBudget) || 0);
+    if (isSelfPurchase && periodBudget > 0 && walletMoney(periodSpent + amount) > periodBudget) return { ok: false, reason: '超过角色周期消费预算' };
+    const cooldownByFrequency = { rare: 7 * 24 * 60 * 60 * 1000, normal: 2 * 24 * 60 * 60 * 1000, active: 6 * 60 * 60 * 1000 };
+    const cooldown = cooldownByFrequency[character.characterShoppingFrequency || 'rare'];
+    if (isSelfPurchase && recentOrders[0] && cooldown && now - recentOrders[0].time < cooldown) return { ok: false, reason: '角色自主购物仍在频率间隔内' };
+    const allowedCategories = String(character.characterShoppingAllowedCategories || '').split(/[,，、]/).map(item => item.trim()).filter(Boolean);
+    if (isSelfPurchase && allowedCategories.length && !allowedCategories.some(category => items.includes(category))) return { ok: false, reason: '商品不在允许购买类型中' };
+    const orderId = `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let paymentSource = 'character_wallet';
+
+    if (familyCardPay) {
+        const card = bank.familyCards.find(item => item.targetCharId === character.id && item.status === 'active');
+        if (!card) return { ok: false, reason: '角色没有可用的用户亲属卡' };
+        refreshFamilyCardLimits();
+        if (walletMoney(card.limit - (card.usedAmount || 0)) < amount) return { ok: false, reason: '用户亲属卡额度不足' };
+        if (getPiggyBalance() < amount) return { ok: false, reason: '用户钱包余额不足' };
+        card.usedAmount = walletMoney((card.usedAmount || 0) + amount);
+        if (!Array.isArray(card.transactions)) card.transactions = [];
+        card.transactions.unshift({ id: `fct_${orderId}`, eventId: orderId, amount, scene: '角色购物', detail: items, targetName: recipientName, time: Date.now() });
+        addPiggyTransaction({ type: 'expense', amount, remark: `亲属卡支出：${character.realName}购买${items}`, source: '角色购物', charName: character.realName || '' });
+        paymentSource = 'user_family_card';
+    } else {
+        const ledger = ensureCharacterWalletLedger(character);
+        if (typeof ledger.balance === 'number' && ledger.balance < amount) return { ok: false, reason: '角色钱包余额不足' };
+        ledger.transactions.unshift({ id: `cwt_${orderId}`, eventId: orderId, type: 'expense', amount, source: 'shop', remark: `商城订单：${items}`, time: Date.now() });
+        if (typeof ledger.balance === 'number') ledger.balance = walletMoney(ledger.balance - amount);
+    }
+
+    bank.orders.unshift({ id: orderId, buyerType: 'character', buyerId: character.id, recipientType: isSelfPurchase ? 'character' : 'user', recipientName, items, amount, delivery: orderMatch[3].trim(), paymentSource, status: 'paid', time: Date.now(), messageId: message.id });
+    bank.orders = bank.orders.slice(0, 500);
+    message.shopOrderId = orderId;
+    message.shopPaymentSource = paymentSource;
+    message.shopPaymentStatus = 'paid';
+    const persisted = await persistWalletState([character.id]);
+    if (!persisted) {
+        db.piggyBank = bankSnapshot;
+        if (walletSnapshot) character.walletLedger = walletSnapshot;
+        else delete character.walletLedger;
+        delete message.shopOrderId;
+        delete message.shopPaymentSource;
+        delete message.shopPaymentStatus;
+        return { ok: false, reason: '订单数据未能安全保存，本次未扣款' };
+    }
+    return { ok: true, orderId, paymentSource };
+}
+
+window.WalletSystem = {
+    ensureState: ensurePiggyBankState,
+    persist: persistWalletState,
+    chargeReceivedFamilyCard,
+    respondToIssuedFamilyCard,
+    respondToReceivedFamilyCard,
+    processFamilyCardActionMessage,
+    executeCharacterPurchase,
+    ensureCharacterWalletLedger
+};
+
 function getPeriodMs(period, customDays) {
     const day = 24 * 60 * 60 * 1000;
     if (period === 'daily') return day;
@@ -16,25 +349,44 @@ function getPeriodMs(period, customDays) {
     return 30 * day;
 }
 
+function getNextFamilyCardRefreshTime(fromTime, period, customDays) {
+    if (period === 'monthly') {
+        const next = new Date(fromTime);
+        const originalDay = next.getDate();
+        next.setDate(1);
+        next.setMonth(next.getMonth() + 1);
+        const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(originalDay, lastDay));
+        return next.getTime();
+    }
+    return fromTime + getPeriodMs(period, customDays);
+}
+
 function refreshFamilyCardLimits() {
     if (!db.piggyBank) return;
     const now = Date.now();
     (db.piggyBank.familyCards || []).forEach(card => {
         if (card.status !== 'active') return;
-        const periodMs = getPeriodMs(card.refreshPeriod, card.refreshDays || 30);
         if (card.nextRefreshTime && now >= card.nextRefreshTime) {
             card.usedAmount = 0;
             card.lastRefreshTime = now;
-            card.nextRefreshTime = now + periodMs;
+            let next = Number(card.nextRefreshTime);
+            do {
+                next = getNextFamilyCardRefreshTime(next, card.refreshPeriod, card.refreshDays || 30);
+            } while (next <= now);
+            card.nextRefreshTime = next;
         }
     });
     (db.piggyBank.receivedFamilyCards || []).forEach(card => {
         if (card.status !== 'active') return;
-        const periodMs = getPeriodMs(card.refreshPeriod, card.refreshDays || 30);
         if (card.nextRefreshTime && now >= card.nextRefreshTime) {
             card.usedAmount = 0;
             card.lastRefreshTime = now;
-            card.nextRefreshTime = now + periodMs;
+            let next = Number(card.nextRefreshTime);
+            do {
+                next = getNextFamilyCardRefreshTime(next, card.refreshPeriod, card.refreshDays || 30);
+            } while (next <= now);
+            card.nextRefreshTime = next;
         }
     });
 }
@@ -46,10 +398,8 @@ function getFamilyCardById(cardId, isReceived) {
 }
 
 function createFamilyCard(opts) {
-    if (!db.piggyBank) db.piggyBank = { balance: 520, transactions: [], familyCards: [], receivedFamilyCards: [] };
-    if (!Array.isArray(db.piggyBank.familyCards)) db.piggyBank.familyCards = [];
+    ensurePiggyBankState();
     const id = 'fc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    const periodMs = getPeriodMs(opts.refreshPeriod || 'monthly', opts.refreshDays || 30);
     const now = Date.now();
     const card = {
         id,
@@ -65,8 +415,8 @@ function createFamilyCard(opts) {
         refreshPeriod: opts.refreshPeriod || 'monthly',
         refreshDays: opts.refreshDays || 30,
         lastRefreshTime: now,
-        nextRefreshTime: now + periodMs,
-        status: 'active',
+        nextRefreshTime: getNextFamilyCardRefreshTime(now, opts.refreshPeriod || 'monthly', opts.refreshDays || 30),
+        status: opts.status || (opts.targetCharId ? 'pending' : 'draft'),
         statusChangedBy: '',
         notifyOnCharge: false,
         createdTime: now,
@@ -77,15 +427,19 @@ function createFamilyCard(opts) {
 }
 
 function createReceivedFamilyCard(opts) {
-    if (!db.piggyBank) db.piggyBank = { balance: 520, transactions: [], familyCards: [], receivedFamilyCards: [] };
-    if (!Array.isArray(db.piggyBank.receivedFamilyCards)) db.piggyBank.receivedFamilyCards = [];
-    const existing = db.piggyBank.receivedFamilyCards.find(c => c.fromCharId === (opts.fromCharId || '') && c.status === 'active');
-    if (existing) {
-        existing.status = 'revoked';
-        existing.statusChangedBy = 'system_replaced';
-    }
+    ensurePiggyBankState();
+    // 同一角色只保留最新一张待确认卡；已生效的旧卡等新卡真正接收后再替换。
+    (db.piggyBank.receivedFamilyCards || []).forEach(item => {
+        if (item.fromCharId === (opts.fromCharId || '') && item.status === 'pending') {
+            item.status = 'replaced';
+            item.statusChangedBy = 'system_replaced';
+            item.statusChangedAt = Date.now();
+            const owner = (db.characters || []).find(character => character.id === item.fromCharId);
+            const oldMessage = owner && [...(owner.history || [])].reverse().find(message => message.receivedFamilyCardId === item.id);
+            if (oldMessage) oldMessage.receivedFamilyCardStatus = 'replaced';
+        }
+    });
     const id = 'rfc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    const periodMs = getPeriodMs(opts.refreshPeriod || 'monthly', opts.refreshDays || 30);
     const now = Date.now();
     const card = {
         id,
@@ -101,8 +455,8 @@ function createReceivedFamilyCard(opts) {
         refreshPeriod: opts.refreshPeriod || 'monthly',
         refreshDays: opts.refreshDays || 30,
         lastRefreshTime: now,
-        nextRefreshTime: now + periodMs,
-        status: 'active',
+        nextRefreshTime: getNextFamilyCardRefreshTime(now, opts.refreshPeriod || 'monthly', opts.refreshDays || 30),
+        status: opts.status || 'pending',
         statusChangedBy: '',
         receivedTime: now,
         transactions: []
@@ -235,8 +589,14 @@ function renderFamilyCardList() {
     container.innerHTML = '';
     all.forEach(card => {
         const remaining = Math.max(0, card.limit - (card.usedAmount || 0));
-        const statusClass = card.status === 'frozen' ? 'frozen' : card.status === 'revoked' ? 'revoked' : '';
-        const statusText = card.status === 'frozen' ? '已冻结' : card.status === 'revoked' ? '已收回' : '';
+        const statusClass = card.status === 'frozen' ? 'frozen' : ['revoked', 'returned', 'replaced'].includes(card.status) ? 'revoked' : card.status === 'pending' ? 'pending' : '';
+        const statusText = card.status === 'frozen' ? '已冻结'
+            : card.status === 'revoked' ? '已收回'
+            : card.status === 'returned' ? '已退还'
+            : card.status === 'replaced' ? '已替换'
+            : card.status === 'pending' ? '待接收'
+            : card.status === 'draft' ? '未发送'
+            : '';
         const typeText = card.isReceived ? ('来自 ' + (card.fromCharName || '')) : ('赠予 ' + (card.targetCharName || ''));
         const mini = document.createElement('div');
         mini.className = 'family-card-mini' + (statusClass ? ' ' + statusClass : '');
@@ -270,7 +630,13 @@ function openFamilyCardDetail(cardId, isReceived) {
     const remaining = Math.max(0, card.limit - (card.usedAmount || 0));
     const periodText = card.refreshPeriod === 'daily' ? '每天' : card.refreshPeriod === 'weekly' ? '每周' : card.refreshPeriod === 'monthly' ? '每月' : (card.refreshDays || 30) + '天';
     const nextRefresh = card.nextRefreshTime ? new Date(card.nextRefreshTime).toLocaleDateString('zh-CN') : '-';
-    const statusText = card.status === 'active' ? '正常' : card.status === 'frozen' ? '已冻结' : '已收回';
+    const statusText = card.status === 'active' ? '正常'
+        : card.status === 'pending' ? '待接收'
+        : card.status === 'draft' ? '未发送'
+        : card.status === 'frozen' ? '已冻结'
+        : card.status === 'returned' ? '已退还'
+        : card.status === 'replaced' ? '已替换'
+        : '已收回';
     const content = document.getElementById('family-card-detail-content');
     if (!content) return;
     const hasCover = (card.cardCover || '').trim().length > 0;
@@ -332,7 +698,7 @@ function openFamilyCardDetail(cardId, isReceived) {
         }
     }
     const notifyCb = content.querySelector('#fc-detail-notify');
-    if (notifyCb && !card.isReceived) notifyCb.checked = !!card.notifyOnCharge;
+    if (notifyCb && !isReceived) notifyCb.checked = !!card.notifyOnCharge;
     content.querySelector('#fc-detail-adjust-btn') && content.querySelector('#fc-detail-adjust-btn').addEventListener('click', () => {
         const val = prompt('输入新额度（元）', String(card.limit));
         if (val === null) return;
@@ -360,7 +726,7 @@ function openFamilyCardDetail(cardId, isReceived) {
         switchScreen('piggy-bank-screen');
         if (typeof renderPiggyBankScreen === 'function') renderPiggyBankScreen();
     });
-    if (notifyCb && !card.isReceived) notifyCb.addEventListener('change', () => { card.notifyOnCharge = notifyCb.checked; if (typeof saveData === 'function') saveData(); });
+    if (notifyCb && !isReceived) notifyCb.addEventListener('change', () => { card.notifyOnCharge = notifyCb.checked; void persistWalletState(); });
     switchScreen('family-card-detail-screen');
 }
 
@@ -387,6 +753,7 @@ function getCardFaceStyle(card) {
 }
 
 function setupPiggyBankApp() {
+    ensurePiggyBankState();
     const screen = document.getElementById('piggy-bank-screen');
     const addBtn = document.getElementById('piggy-bank-add-btn');
     const editBtn = document.getElementById('piggy-bank-edit-btn');
@@ -520,6 +887,16 @@ function setupPiggyBankApp() {
     const familyCardSendCharList = document.getElementById('family-card-send-char-list');
     const familyCardSendSkipBtn = document.getElementById('family-card-send-skip-btn');
     const familyCardDetailBack = document.getElementById('family-card-detail-back');
+    const narrationModeSelect = document.getElementById('family-card-narration-mode');
+
+    if (narrationModeSelect) {
+        narrationModeSelect.value = db.piggyBank.familyCardNarrationMode || 'detailed';
+        narrationModeSelect.addEventListener('change', async () => {
+            db.piggyBank.familyCardNarrationMode = narrationModeSelect.value;
+            await persistWalletState();
+            if (typeof showToast === 'function') showToast('消费旁白设置已保存');
+        });
+    }
 
     familyCardRefreshSelect && familyCardRefreshSelect.addEventListener('change', () => {
         if (familyCardRefreshDaysWrap) familyCardRefreshDaysWrap.style.display = familyCardRefreshSelect.value === 'custom' ? 'block' : 'none';
@@ -554,7 +931,7 @@ function setupPiggyBankApp() {
         let pendingCardForSend = card;
         familyCardSendCharList.innerHTML = '';
         (db.characters || []).forEach(char => {
-            const alreadyHas = (db.piggyBank.familyCards || []).some(c => c.targetCharId === char.id && c.status === 'active');
+            const alreadyHas = (db.piggyBank.familyCards || []).some(c => c.targetCharId === char.id && (c.status === 'active' || c.status === 'pending'));
             if (alreadyHas) return;
             const li = document.createElement('li');
             li.className = 'family-card-char-item';
@@ -565,7 +942,9 @@ function setupPiggyBankApp() {
                 if (!targetChar) return;
                 pendingCardForSend.targetCharId = targetChar.id;
                 pendingCardForSend.targetCharName = targetChar.realName || targetChar.remarkName || '';
-                if (typeof saveData === 'function') saveData();
+                pendingCardForSend.status = 'pending';
+                pendingCardForSend.statusChangedBy = 'user';
+                pendingCardForSend.statusChangedAt = Date.now();
                 const periodText = pendingCardForSend.refreshPeriod === 'daily' ? '每天' : pendingCardForSend.refreshPeriod === 'weekly' ? '每周' : pendingCardForSend.refreshPeriod === 'monthly' ? '每月' : (pendingCardForSend.refreshDays || 30) + '天';
                 const content = `[${targetChar.myName || myName}赠送${pendingCardForSend.targetCharName}亲属卡：额度${pendingCardForSend.limit}元；刷新周期：${periodText}]`;
                 const message = {
@@ -578,6 +957,7 @@ function setupPiggyBankApp() {
                     familyCardStatus: 'pending'
                 };
                 targetChar.history.push(message);
+                void persistWalletState([targetChar.id]);
                 if (typeof addMessageBubble === 'function') addMessageBubble(message, targetChar.id, 'private');
                 if (typeof renderChatList === 'function') renderChatList();
                 if (familyCardSendCharModal) familyCardSendCharModal.classList.remove('visible');

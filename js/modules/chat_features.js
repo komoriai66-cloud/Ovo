@@ -298,7 +298,7 @@ function setupWalletSystem() {
             document.getElementById('group-recipient-selection-modal').classList.add('visible');
         }
     });
-    sendTransferForm.addEventListener('submit', (e) => {
+    sendTransferForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const amountStr = (transferAmountInput.value || '').trim().replace(',', '.');
         const amount = parseFloat(amountStr);
@@ -353,43 +353,23 @@ function setupWalletSystem() {
         } else if (db.piggyBank && db.piggyBank.receivedFamilyCards) {
             const card = db.piggyBank.receivedFamilyCards.find(c => c.id === payMethod);
             if (card) {
-                card.usedAmount = (card.usedAmount || 0) + totalDeduct;
-                if (!card.transactions) card.transactions = [];
                 const chat = currentChatType === 'private' ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
                 const toName = currentChatType === 'private' ? (chat && chat.realName) : (currentGroupAction && currentGroupAction.recipients && currentGroupAction.recipients.length ? (chat.members || []).map(m => m.realName).filter(Boolean).join('、') : '');
-                card.transactions.unshift({ id: 'rfct_' + Date.now(), amount: totalDeduct, scene: '转账', detail: remark || '转账', targetName: toName || '', time: Date.now() });
-
-                // 触发角色通知和钱包账单
-                const fromChar = db.characters.find(c => c.id === card.fromCharId);
-                const myName = (chat && chat.myName) ? chat.myName : '你';
-                if (fromChar) {
-                    if (!fromChar.peekData) fromChar.peekData = {};
-                    if (!fromChar.peekData.wallet) fromChar.peekData.wallet = { balance: Math.floor(Math.random() * 10000), income: [], expense: [], summary: '本月支出较多' };
-                    if (!fromChar.peekData.wallet.expense) fromChar.peekData.wallet.expense = [];
-                    fromChar.peekData.wallet.expense.unshift({
+                if (window.WalletSystem && typeof window.WalletSystem.chargeReceivedFamilyCard === 'function') {
+                    const chargeResult = await window.WalletSystem.chargeReceivedFamilyCard(card.id, {
                         amount: totalDeduct,
-                        time: new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-                        remark: `亲属卡支出：转账给 ${toName}，备注：${remark || '无'}`
+                        scene: '转账',
+                        detail: `给“${toName}”转账，备注：“${remark || '无'}”`,
+                        targetName: toName || ''
                     });
-                    
-                    if (fromChar.familyCardEnabled) {
-                        const notice = `[系统情景通知：你给${myName}的亲属卡刚刚产生了一笔 ${totalDeduct.toFixed(2)} 元的消费，用途是：给“${toName}”转账，转账备注是：“${remark || '无'}”。请根据你的人设和你们现在的关系，在下一次回复中自然地对此作出反应或询问。]`;
-                        fromChar.history.push({
-                            id: 'msg_sys_' + Date.now(),
-                            role: 'system',
-                            content: notice,
-                            timestamp: Date.now()
-                        });
-                        setTimeout(() => {
-                            if (typeof currentChatId !== 'undefined' && currentChatId === fromChar.id && typeof currentChatType !== 'undefined' && currentChatType === 'private') {
-                                if (typeof renderChatList === 'function') renderChatList();
-                                if (typeof getAiReply === 'function') getAiReply(currentChatId, currentChatType, true);
-                            }
-                        }, 500);
+                    if (!chargeResult.ok) {
+                        showToast(chargeResult.reason || '亲属卡支付失败');
+                        return;
                     }
                 }
             }
         }
+        if (window.WalletSystem && typeof window.WalletSystem.persist === 'function') await window.WalletSystem.persist();
         sendMyTransfer(amountStr, remark);
     });
     acceptTransferBtn.addEventListener('click', () => respondToTransfer('received'));
@@ -592,11 +572,16 @@ window.sendFamilyCardResponse = async function(msgId, action) {
     if (!character) return;
     const message = character.history.find(m => m.id === msgId);
     if (!message || !message.receivedFamilyCardId || message.receivedFamilyCardStatus !== 'pending') return;
+    const receivedCardsSnapshot = db.piggyBank && Array.isArray(db.piggyBank.receivedFamilyCards)
+        ? JSON.parse(JSON.stringify(db.piggyBank.receivedFamilyCards)) : [];
+    const historyLengthBefore = character.history.length;
 
     const statusToSet = action === 'accept' ? 'accepted' : 'returned';
     message.receivedFamilyCardStatus = statusToSet;
 
-    if (action === 'return' && db.piggyBank && db.piggyBank.receivedFamilyCards) {
+    if (window.WalletSystem && typeof window.WalletSystem.respondToReceivedFamilyCard === 'function') {
+        window.WalletSystem.respondToReceivedFamilyCard(character, message, action);
+    } else if (action === 'return' && db.piggyBank && db.piggyBank.receivedFamilyCards) {
         const card = db.piggyBank.receivedFamilyCards.find(c => c.id === message.receivedFamilyCardId);
         if (card) card.status = 'returned';
     }
@@ -622,7 +607,17 @@ window.sendFamilyCardResponse = async function(msgId, action) {
     };
     character.history.push(contextMessage);
     if (typeof addMessageBubble === 'function') addMessageBubble(contextMessage, currentChatId, currentChatType);
-    if (typeof saveCurrentChat === 'function') await saveCurrentChat();
+    let persisted = true;
+    if (window.WalletSystem && typeof window.WalletSystem.persist === 'function') persisted = await window.WalletSystem.persist([character.id]);
+    else if (typeof saveCurrentChat === 'function') await saveCurrentChat();
+    if (!persisted) {
+        db.piggyBank.receivedFamilyCards = receivedCardsSnapshot;
+        message.receivedFamilyCardStatus = 'pending';
+        character.history.splice(historyLengthBefore);
+        if (typeof renderMessages === 'function') renderMessages(false, false);
+        if (typeof showToast === 'function') showToast('亲属卡状态保存失败，请重试');
+        return;
+    }
     if (typeof renderChatList === 'function') renderChatList();
 };
 

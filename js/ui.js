@@ -51,6 +51,7 @@ const switchScreen = (targetId) => {
     screens.forEach(screen => screen.classList.remove('active'));
     const targetScreen = document.getElementById(targetId);
     if (targetScreen) targetScreen.classList.add('active');
+    if (window.ReplyResilience) window.ReplyResilience.scheduleSessionSave();
     
     // 关闭所有覆盖层和侧边栏
     const overlays = document.querySelectorAll('.modal-overlay, .action-sheet-overlay, .settings-sidebar');
@@ -76,6 +77,8 @@ const switchScreen = (targetId) => {
                     item.classList.remove('active');
                 }
             });
+        } else if (targetId === 'world-book-detail-screen' || targetId === 'world-book-screen') {
+            globalNav.style.display = 'none';
         } else {
             globalNav.style.display = 'none';
         }
@@ -355,6 +358,10 @@ function updateBubbleCssPreview(previewContainer, css, useDefault, theme) {
 let currentPageIndex = 0;
 
 function setupHomeScreen() {
+    if (db.homeLayoutMode === 'free' && typeof renderFreeHomeScreen === 'function') {
+        renderFreeHomeScreen();
+        return;
+    }
     const getIcon = (id) => db.customIcons[id] || defaultIcons[id].url;
     const getName = (id) => (db.customAppNames && db.customAppNames[id]) || defaultIcons[id].name;
     if (!db.insWidgetSettings) {
@@ -424,7 +431,6 @@ function setupHomeScreen() {
                 <a href="#" class="app-icon" data-target="world-book-screen"><img src="${getIcon('world-book-screen')}" alt="World Book" class="icon-img"><span class="app-name">${getName('world-book-screen')}</span></a>
                 <a href="#" class="app-icon" data-target="customize-screen"><img src="${getIcon('customize-screen')}" alt="Customize" class="icon-img"><span class="app-name">${getName('customize-screen')}</span></a>
                 <a href="#" class="app-icon" data-target="tutorial-screen"><img src="${getIcon('tutorial-screen')}" alt="Tutorial" class="icon-img"><span class="app-name">${getName('tutorial-screen')}</span></a>
-                <a href="./rescue-export.html" class="app-icon" aria-label="救援导出"><span class="icon-img" style="display:flex;align-items:center;justify-content:center;font-size:34px;">🛟</span><span class="app-name">救援导出</span></a>
                 <div class="heart-photo-widget"></div>
             </div>
         </div>
@@ -456,12 +462,8 @@ function setupHomeScreen() {
                     <span class="app-name">${getName('appearance-settings-screen')}</span>
                 </a>
                 <a href="#" class="app-icon" data-action="biekan-app">
-                    <img src="${getIcon('biekan-app')}" alt="别看" class="icon-img">
+                    <img src="${getIcon('biekan-app')}" alt="MCP" class="icon-img">
                     <span class="app-name">${getName('biekan-app')}</span>
-                </a>
-                <a href="#" class="app-icon" data-action="xiaowu-app">
-                    <img src="${getIcon('xiaowu-app')}" alt="小屋" class="icon-img">
-                    <span class="app-name">${getName('xiaowu-app')}</span>
                 </a>
              </div>
         </div>
@@ -517,8 +519,7 @@ function setupHomeScreen() {
             };
         }
     });
-    document.querySelector('[data-action="biekan-app"]')?.addEventListener('click', (e) => { e.preventDefault(); showToast('别看APP正在开发中…'); });
-    document.querySelector('[data-action="xiaowu-app"]')?.addEventListener('click', (e) => { e.preventDefault(); showToast('小屋APP正在开发中…'); });
+    document.querySelector('[data-action="biekan-app"]')?.addEventListener('click', (e) => { e.preventDefault(); if (window.McpManager) window.McpManager.open(); });
     document.querySelector('[data-action="magic-room-app"]')?.addEventListener('click', (e) => { 
         e.preventDefault(); 
         if (typeof setupMagicRoomApp === 'function') setupMagicRoomApp();

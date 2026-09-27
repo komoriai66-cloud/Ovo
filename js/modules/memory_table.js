@@ -1555,10 +1555,11 @@
     }
 
     function getSummaryApiConfig() {
-        const apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
+        let apiConfig = (db.summaryApiSettings && db.summaryApiSettings.url && db.summaryApiSettings.key && db.summaryApiSettings.model)
             ? db.summaryApiSettings
             : db.apiSettings;
-        if (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model) {
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('memorySummary', apiConfig) : apiConfig;
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!apiConfig || !apiConfig.url || !apiConfig.key || !apiConfig.model)) {
             throw new Error('请先配置总结 API');
         }
         return apiConfig;
@@ -2960,6 +2961,8 @@ ${tableContext}`;
         const openFromSettingsBtn = document.getElementById('setting-open-memory-table-btn');
         if (openFromSettingsBtn) {
             openFromSettingsBtn.addEventListener('click', () => {
+                const backBtn = document.querySelector('#memory-table-screen .back-btn');
+                if (backBtn) backBtn.setAttribute('data-target', 'chat-settings-screen');
                 renderMemoryTableScreen();
                 switchScreen('memory-table-screen');
             });

@@ -234,6 +234,8 @@ function setupChatRoom() {
     if (memoryJournalBtn) {
         memoryJournalBtn.addEventListener('click', () => {
             renderJournalList();
+            const backBtn = document.querySelector('#memory-journal-screen .back-btn');
+            if (backBtn) backBtn.setAttribute('data-target', 'chat-room-screen');
             switchScreen('memory-journal-screen');
             showPanel('none'); 
         });
@@ -247,6 +249,8 @@ function setupChatRoom() {
                 return;
             }
             if (typeof renderMemoryTableScreen === 'function') {
+                const backBtn = document.querySelector('#memory-table-screen .back-btn');
+                if (backBtn) backBtn.setAttribute('data-target', 'chat-room-screen');
                 renderMemoryTableScreen();
                 switchScreen('memory-table-screen');
             } else {
@@ -264,6 +268,8 @@ function setupChatRoom() {
                 return;
             }
             if (typeof renderVectorMemoryScreen === 'function') {
+                const backBtn = document.querySelector('#vector-memory-screen .back-btn');
+                if (backBtn) backBtn.setAttribute('data-target', 'chat-room-screen');
                 renderVectorMemoryScreen();
                 switchScreen('vector-memory-screen');
             } else {
@@ -353,9 +359,27 @@ function setupChatRoom() {
 
     const abortReplyBtn = document.getElementById('abort-reply-btn');
     if (abortReplyBtn) {
-        abortReplyBtn.addEventListener('click', () => {
-            if (typeof currentReplyAbortController !== 'undefined' && currentReplyAbortController) {
+        abortReplyBtn.addEventListener('click', async () => {
+            const hadLiveController = typeof currentReplyAbortController !== 'undefined' && !!currentReplyAbortController;
+            if (hadLiveController) {
                 currentReplyAbortController.abort();
+            }
+            let clearedPersistedTask = false;
+            if (window.ReplyResilience && typeof window.ReplyResilience.cancelForChat === 'function') {
+                try {
+                    clearedPersistedTask = await window.ReplyResilience.cancelForChat(currentChatId, currentChatType);
+                } catch (error) {
+                    console.warn('[ReplyResilience] could not cancel persisted reply:', error);
+                }
+            }
+            if (hadLiveController || clearedPersistedTask) {
+                isGenerating = false;
+                getReplyBtn.disabled = false;
+                regenerateBtn.disabled = false;
+                if (typingIndicator && typingIndicator.getAttribute('data-theater-generating') !== 'true') {
+                    typingIndicator.style.display = 'none';
+                }
+                if (!hadLiveController && typeof showToast === 'function') showToast('已暂停调用');
             }
         });
     }
@@ -646,7 +670,8 @@ function openChatRoom(chatId, type) {
     // 迁移旧的私聊数据 (仅群聊)
     if (type === 'group' && chat.privateSessions && typeof migratePrivateSessionsToHistory === 'function') {
         migratePrivateSessionsToHistory(chat);
-        saveData(); // 迁移后立即保存
+        if (typeof saveGroup === 'function') saveGroup(chatId); // 迁移后立即保存当前群
+        else saveData();
     }
 
     if (chat.unreadCount && chat.unreadCount > 0) {
@@ -668,9 +693,17 @@ function openChatRoom(chatId, type) {
     }
     getReplyBtn.style.display = 'inline-flex';
     chatRoomScreen.style.backgroundImage = chat.chatBg ? `url(${chat.chatBg})` : (db.globalChatWallpaper ? `url(${db.globalChatWallpaper})` : 'none');
-    typingIndicator.style.display = 'none';
-    isGenerating = false;
-    getReplyBtn.disabled = false;
+    const hasActiveReply = !!(window.ReplyResilience && window.ReplyResilience.hasActive(chatId, type));
+    if (hasActiveReply) {
+        const typingName = type === 'private' ? (chat.remarkName || chat.realName || chat.name) : chat.name;
+        typingIndicator.textContent = `“${typingName}”正在输入中...`;
+        typingIndicator.style.display = 'block';
+    } else {
+        typingIndicator.style.display = 'none';
+    }
+    isGenerating = hasActiveReply;
+    getReplyBtn.disabled = hasActiveReply;
+    regenerateBtn.disabled = hasActiveReply;
     currentPage = 1;
     chatRoomScreen.className = chatRoomScreen.className.replace(/\bchat-active-[^ ]+\b/g, '');
     chatRoomScreen.classList.add(`chat-active-${chatId}`);
@@ -749,6 +782,7 @@ function openChatRoom(chatId, type) {
     updateCustomBubbleStyle(chatId, chat.customBubbleCss, chat.useCustomBubbleCss);
     renderMessages(false, true);
     switchScreen('chat-room-screen');
+    if (window.ReplyResilience) window.ReplyResilience.scheduleSessionSave();
 
     // 角色拉黑用户时的输入区覆盖层：仅根据当前角色状态显示，不修改输入框，避免跨角色污染
     var charBlockedOverlay = document.getElementById('char-blocked-overlay');

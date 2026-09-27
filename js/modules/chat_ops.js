@@ -187,25 +187,36 @@ function handleMessageLongPress(messageWrapper, x, y) {
             action: async () => {
                 const gptSettings = db.gptImageSettings || {};
                 const naiSettings = db.novelAiSettings || {};
+                const googleSettings = db.googleImageSettings || {};
+                const stabilitySettings = db.stabilityImageSettings || {};
                 
                 const isGptOn = gptSettings.enabled;
                 const isNaiOn = naiSettings.enabled;
+                const isGoogleOn = googleSettings.enabled;
+                const isStabilityOn = stabilitySettings.enabled;
                 
-                if (!isGptOn && !isNaiOn) {
+                if (!isGptOn && !isNaiOn && !isGoogleOn && !isStabilityOn) {
                     showToast('未开启生图功能，请先在设置中开启生图引擎');
                     return;
                 }
                 
-                if (isGptOn) {
+                const activeProvider = db.activeImageProvider || (isGptOn ? 'gpt' : isNaiOn ? 'novelai' : isGoogleOn ? 'google' : 'stability');
+                if (activeProvider === 'gpt') {
                     if (!gptSettings.url || !gptSettings.key) {
                         showToast('已开启 GPT 生图，但未填写 URL 或 API Key');
                         return;
                     }
-                } else if (isNaiOn) {
-                    if (!naiSettings.token) {
+                } else if (activeProvider === 'novelai') {
+                    if (!naiSettings.token && naiSettings.authMode !== 'none') {
                         showToast('已开启 NovelAI 生图，但未填写 Token');
                         return;
                     }
+                } else if (activeProvider === 'google' && (!googleSettings.url || !googleSettings.key)) {
+                    showToast('已开启 Google 生图，但未填写地址或 API Key');
+                    return;
+                } else if (activeProvider === 'stability' && (!stabilitySettings.url || !stabilitySettings.key)) {
+                    showToast('已开启 Stability 生图，但未填写地址或 API Key');
+                    return;
                 }
 
                 if (typeof window.retryImageGen === 'function') {

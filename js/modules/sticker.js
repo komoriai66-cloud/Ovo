@@ -187,9 +187,10 @@ async function setupStickerSystem() {
         
         // 优先使用表情包识图 API，如果没有配置，退回使用主 API
         let apiConfig = (db.stickerRecognitionApiSettings && db.stickerRecognitionApiSettings.url && db.stickerRecognitionApiSettings.key && db.stickerRecognitionApiSettings.model) ? db.stickerRecognitionApiSettings : db.apiSettings;
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('stickerVision', apiConfig) : apiConfig;
         
         const {url, key, model, provider} = apiConfig;
-        if (!url || !key || !model) {
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) {
             showToast('请先配置 API');
             return;
         }
@@ -220,9 +221,10 @@ async function setupStickerSystem() {
         
         // 优先使用表情包识图 API，如果没有配置，退回使用主 API
         let apiConfig = (db.stickerRecognitionApiSettings && db.stickerRecognitionApiSettings.url && db.stickerRecognitionApiSettings.key && db.stickerRecognitionApiSettings.model) ? db.stickerRecognitionApiSettings : db.apiSettings;
+        apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('stickerVision', apiConfig) : apiConfig;
         
         const {url, key, model, provider} = apiConfig;
-        if (!url || !key || !model) {
+        if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(apiConfig) : (!url || !key || !model)) {
             showToast('请先配置 API');
             return;
         }
@@ -378,21 +380,7 @@ async function setupStickerSystem() {
             Authorization: `Bearer ${key}`
         };
 
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!response.ok) throw new Error(`API Error: ${response.status}`);
-        
-        const result = await response.json();
-        let description = "";
-        if (provider === 'gemini') {
-            description = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        } else {
-            description = result.choices[0].message.content;
-        }
+        let description = await fetchAiResponse(apiConfig, requestBody, headers, endpoint, false);
 
         if (description) {
             const match = description.match(/<image_description>([\s\S]*?)<\/image_description>/);
