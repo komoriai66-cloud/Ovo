@@ -1860,6 +1860,7 @@ function loadSettingsToSidebar() {
 
         document.getElementById('setting-bilingual-mode').checked = e.bilingualModeEnabled || false;
         document.getElementById('setting-bilingual-style').value = e.bilingualBubbleStyle || 'under';
+        document.getElementById('setting-auto-expand-translation').checked = e.autoExpandTranslation === true;
 
         if (window.PokeSystem) window.PokeSystem.ensureSettings(e);
         const pokeEnabledEl = document.getElementById('setting-poke-enabled');
@@ -2590,6 +2591,7 @@ async function saveSettingsFromSidebar() {
         }
         e.bilingualModeEnabled = document.getElementById('setting-bilingual-mode').checked;
         e.bilingualBubbleStyle = document.getElementById('setting-bilingual-style').value;
+        e.autoExpandTranslation = document.getElementById('setting-auto-expand-translation').checked;
         
         e.avatarMode = document.getElementById('setting-avatar-mode').value;
         e.avatarRadius = parseInt(document.getElementById('setting-avatar-radius').value, 10);

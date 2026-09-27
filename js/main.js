@@ -273,6 +273,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         initDatabase();
         await init();
+        if (typeof compactLegacyChatMedia === 'function') {
+            void compactLegacyChatMedia().catch(error => console.error('聊天媒体整理失败:', error));
+        }
     } catch (error) {
         console.error('应用初始化失败:', error);
         if (typeof showToast === 'function') {

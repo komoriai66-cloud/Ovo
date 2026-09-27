@@ -1,6 +1,18 @@
 const OVO_REPLY_IDLE_TIMEOUT_MS = 90 * 1000;
 const OVO_REPLY_TOTAL_TIMEOUT_MS = 10 * 60 * 1000;
 
+function restoreMissingThinkingStart(response, cotEnabled, chat) {
+    if (!cotEnabled || !response) return response;
+    const tagPairs = [['<thinking>', '</thinking>'], ['<think>', '</think>']];
+    if (chat?._cotTagStart && chat?._cotTagEnd) tagPairs.push([chat._cotTagStart, chat._cotTagEnd]);
+    const lowerResponse = response.toLowerCase();
+    const missingStart = tagPairs
+        .map(([start, end]) => ({ start, index: lowerResponse.indexOf(end.toLowerCase()) }))
+        .filter(({ start, index }) => index >= 0 && !lowerResponse.slice(0, index).includes(start.toLowerCase()))
+        .sort((a, b) => a.index - b.index)[0];
+    return missingStart ? missingStart.start + response : response;
+}
+
 async function getAiReply(chatId, chatType, isBackground = false, isSummary = false, isCharBlockedMonologue = false, isPhoneControlRevokeAttempt = false, replyOptions = {}) {
     if (isGenerating && !isBackground && !replyOptions.recoveryTaskId) return;
 
@@ -906,13 +918,15 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 return true;
             }
         }
-        console.log('[DEBUG] AutoReply Request Body:', JSON.stringify(requestBody));
+        console.log('[DEBUG] AutoReply Request:', provider, model,
+            'messages:', (requestBody.contents || requestBody.messages || []).length);
         let endpoint = (provider === 'gemini') ? `${url}/v1beta/models/${model}:streamGenerateContent?key=${getRandomValue(key)}` : `${url}/v1/chat/completions`;
         let headers = (provider === 'gemini') ? {'Content-Type': 'application/json'} : {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${key}`
         };
-        const unpreparedRequestBody = JSON.parse(JSON.stringify(requestBody));
+        // prepareAiProviderRequest 自己复制请求体；保留原对象供重试，避免额外序列化图片。
+        const unpreparedRequestBody = requestBody;
         const preparedRequest = prepareAiProviderRequest(apiConfig, requestBody, headers, endpoint, streamEnabled);
         requestBody = preparedRequest.body; headers = preparedRequest.headers; endpoint = preparedRequest.endpoint; provider = preparedRequest.provider;
         if (latestTurnProtectionEnabled && latestTurnIds.length) {
@@ -973,6 +987,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             try {
                 result = await response.json();
                 touchReplyProgress();
+                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, result);
                 console.log('【API完整响应数据】:', result);
             } catch (e) {
                 const text = await response.text();
@@ -983,10 +998,6 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             let fullResponse = "";
             const extracted = extractAiProviderResponse(result, provider);
             fullResponse = extracted.content;
-            if (extracted.reasoning) {
-                chat._lastNativeReasoning = extracted.reasoning;
-                fullResponse = `<thinking>${extracted.reasoning}</thinking>\n${fullResponse}`;
-            }
             
             // === 【补丁：把被吃掉的开头补回来】 ===
             // 仅在 CoT 开启且检测到闭合标签时补全
@@ -1014,10 +1025,10 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 cotEnabled = useCharCot ? chat.cotSettings.chatEnabled : (db.cotSettings && db.cotSettings.enabled);
             }
             // 【修改】去掉了 !isBackground，确保后台模式也能正确补全标签
-            if (cotEnabled && fullResponse && !fullResponse.trim().startsWith('<thinking>')) {
-                 if (fullResponse.includes('</thinking>')) {
-                     fullResponse = '<thinking>' + fullResponse;
-                 }
+            fullResponse = restoreMissingThinkingStart(fullResponse, cotEnabled, chat);
+            if (extracted.reasoning) {
+                chat._lastNativeReasoning = extracted.reasoning;
+                fullResponse = `<thinking>${extracted.reasoning}</thinking>\n${fullResponse}`;
             }
             // ===================================
             
@@ -1078,7 +1089,9 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         if (!data) return false;
         if (data.trim() === '[DONE]') return true;
         try {
-            const extracted = extractAiProviderResponse(JSON.parse(data), apiType, true);
+            const parsed = JSON.parse(data);
+            if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, parsed);
+            const extracted = extractAiProviderResponse(parsed, apiType, true);
             fullResponse += extracted.content;
             fullReasoning += extracted.reasoning || '';
         } catch (error) {
@@ -1136,6 +1149,7 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         try {
             const parsedStream = JSON.parse(accumulatedChunk);
             fullResponse = parsedStream.map(item => {
+                if (typeof captureChatTokenUsage === 'function') captureChatTokenUsage(chat, item);
                 const extracted = extractAiProviderResponse(item, apiType, true);
                 fullReasoning += extracted.reasoning || '';
                 return extracted.content;
@@ -1147,10 +1161,6 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         }
     }
     if (replyTask && window.ReplyResilience) window.ReplyResilience.checkpoint(replyTask, fullResponse, fullReasoning);
-    if (fullReasoning) {
-        chat._lastNativeReasoning = fullReasoning;
-        fullResponse = `<thinking>${fullReasoning}</thinking>\n${fullResponse}`;
-    }
     // === 【补丁：补全流式输出时丢失的开头标签】 ===
     // 无论前台后台，只要是CoT开启且被预填吃掉了开头，都要补回来
     let isOfflineNode = false;
@@ -1177,11 +1187,10 @@ async function processStream(response, chat, apiType, targetChatId, targetChatTy
         cotEnabled = useCharCot ? chat.cotSettings.chatEnabled : (db.cotSettings && db.cotSettings.enabled);
     }
     // 【修改】去掉了 !isBackground，确保后台模式也能正确补全标签
-    if (cotEnabled && fullResponse && !fullResponse.trim().startsWith('<thinking>')) {
-         // 这里判断：如果内容里有闭合的 </thinking> 但开头没有 <thinking>，说明开头被 Prefill 吃掉了
-         if (fullResponse.includes('</thinking>')) {
-             fullResponse = '<thinking>' + fullResponse;
-         }
+    fullResponse = restoreMissingThinkingStart(fullResponse, cotEnabled, chat);
+    if (fullReasoning) {
+        chat._lastNativeReasoning = fullReasoning;
+        fullResponse = `<thinking>${fullReasoning}</thinking>\n${fullResponse}`;
     }
 
     // ===================

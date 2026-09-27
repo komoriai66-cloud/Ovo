@@ -204,6 +204,7 @@ function loadGroupSettingsToSidebar() {
     if (bilingualModeCheckbox && bilingualStyleSelect) {
         bilingualModeCheckbox.checked = group.bilingualModeEnabled || false;
         bilingualStyleSelect.value = group.bilingualBubbleStyle || 'under';
+        document.getElementById('setting-group-auto-expand-translation').checked = group.autoExpandTranslation === true;
         
         if (bilingualStyleContainer) {
             bilingualStyleContainer.style.display = group.bilingualModeEnabled ? 'flex' : 'none';
@@ -564,6 +565,7 @@ async function saveGroupSettingsFromSidebar(showToastFlag = true) {
     
     group.bilingualModeEnabled = document.getElementById('setting-group-bilingual-mode').checked;
     group.bilingualBubbleStyle = document.getElementById('setting-group-bilingual-style').value;
+    group.autoExpandTranslation = document.getElementById('setting-group-auto-expand-translation').checked;
     
     // bilingualMembers 现在由弹窗确认按钮直接保存，这里不需要再处理了
 

@@ -974,9 +974,15 @@ body.night-mode-active {
 }
 
 /* 对话中的 MCP 执行卡片 (Chat Activity Bubble) */
+.mcp-activity-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .mcp-message-card {
   width: 100%;
   max-width: 320px;
+  min-width: 0;
   background: var(--mcp-card);
   border: 1px solid var(--mcp-card-border);
   border-radius: var(--mcp-radius-md);
@@ -1003,25 +1009,48 @@ body.night-mode-active {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
 .mcp-message-source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
   color: var(--mcp-accent);
   text-transform: uppercase;
 }
 
+.mcp-message-head .mcp-status-tag {
+  flex: none;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--mcp-text-muted);
+}
+
+.mcp-message-head .mcp-status-tag.running { color: var(--mcp-accent); }
+.mcp-message-head .mcp-status-tag.success { color: var(--mcp-success); }
+.mcp-message-head .mcp-status-tag.failed { color: var(--mcp-danger); }
+
+.mcp-message-body {
+  min-width: 0;
+}
+
 .mcp-message-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--mcp-text-main);
+  overflow-wrap: anywhere;
 }
 
 .mcp-message-summary {
   font-size: 12px;
   color: var(--mcp-text-muted);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .mcp-message-detail {

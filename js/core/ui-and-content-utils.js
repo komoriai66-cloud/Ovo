@@ -858,8 +858,11 @@ function getMixedContent(responseData) {
 
 // 过滤聊天记录用于 AI 上下文 (包含状态栏剔除和双语格式化)
 function filterHistoryForAI(chat, historySlice, ignoreContextDisabled = false) {
-    // 1. 基础过滤：深度克隆并过滤掉被屏蔽上下文的消息
-    let filteredHistory = JSON.parse(JSON.stringify(historySlice || chat.history));
+    // 仅复制下方过滤逻辑会改动的消息及 part；图片数据字符串保持引用，避免每次请求复制整份 Base64。
+    let filteredHistory = (historySlice || chat.history || []).map(message => ({
+        ...message,
+        parts: Array.isArray(message.parts) ? message.parts.map(part => ({ ...part })) : message.parts
+    }));
     if (!ignoreContextDisabled) {
         filteredHistory = filteredHistory.filter(m => !m.isContextDisabled);
     }
