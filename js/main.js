@@ -110,6 +110,7 @@ const init = async () => {
     setupDeleteHistoryChunk();
     setupForumBindingFeature();
     setupForumFeature();
+    if (window.Moments) { try { window.Moments.init(); } catch (e) { console.error('动态初始化失败:', e); } }
     setupShareModal();
     setupStorageAnalysisScreen();
     setupPomodoroApp();

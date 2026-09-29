@@ -17,6 +17,27 @@ vm.runInContext(fs.readFileSync(path.join(root, 'js/modules/chat-ai/request-and-
 vm.runInContext(fs.readFileSync(path.join(root, 'js/modules/chat-ai/response-and-control.js'), 'utf8'), context);
 
 {
+    const namedSticker = [
+        { type: 'text', text: '[蜜蜜发送的表情包：无语]' },
+        { type: 'sticker', data: 'data:image/png;base64,QUJD' }
+    ];
+    const withoutDescription = context.collapseStickerPartsForAI(namedSticker);
+    assert.deepEqual(Array.from(withoutDescription, part => part.text), ['[蜜蜜发送的表情包：无语]']);
+    assert.equal(namedSticker.length, 2);
+
+    const withDescription = context.collapseStickerPartsForAI([
+        namedSticker[0], { ...namedSticker[1], description: '翻白眼' }
+    ]);
+    assert.deepEqual(Array.from(withDescription, part => part.text), [
+        '[蜜蜜发送的表情包：无语]（同一张表情包的画面：翻白眼）'
+    ]);
+    assert.equal(namedSticker[0].text, '[蜜蜜发送的表情包：无语]');
+
+    const legacy = context.collapseStickerPartsForAI([{ type: 'sticker', description: '翻白眼' }]);
+    assert.deepEqual(Array.from(legacy, part => part.text), ['[一个表情包，画面：翻白眼]']);
+}
+
+{
     const prepared = context.prepareAiProviderRequest({
         url: 'https://api.anthropic.test', key: 'secret', model: 'claude-3-7-sonnet', apiProtocol: 'anthropic', provider: 'claude'
     }, {

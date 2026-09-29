@@ -111,6 +111,23 @@
                         </div>
                     </div>
 
+                    <div class="kkt-group" id="magic-room-moments-prompts" style="margin-top:12px;">
+                        <div class="kkt-item"><div class="kkt-item-label">动态能力提示词<p class="kkt-item-hint">只注入角色已开启的能力；旧预设自动接入。这里修改的文字对所有预设生效。</p></div></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-post">自主发动态</label><textarea id="magic-moments-post" data-moments-prompt="post" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-story">自主发 Story</label><textarea id="magic-moments-story" data-moments-prompt="story" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-browse">自主浏览</label><textarea id="magic-moments-browse" data-moments-prompt="browse" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-explicit-view">明确请求观看</label><textarea id="magic-moments-explicit-view" data-moments-prompt="explicitView" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-interact">点赞与评论</label><textarea id="magic-moments-interact" data-moments-prompt="interact" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-contacts">角色人脉</label><textarea id="magic-moments-contacts" data-moments-prompt="contacts" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-seen">已看动态上下文</label><textarea id="magic-moments-seen" data-moments-prompt="seen" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-unseen">未看帖子索引</label><textarea id="magic-moments-unseen" data-moments-prompt="unseen" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-post-generation">发帖内容生成</label><textarea id="magic-moments-post-generation" data-moments-prompt="postGeneration" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-autonomy">自主活动判断</label><textarea id="magic-moments-autonomy" data-moments-prompt="autonomy" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-chat-view-decision">私聊中查看判断</label><textarea id="magic-moments-chat-view-decision" data-moments-prompt="chatViewDecision" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-view-decision">观看后互动判断</label><textarea id="magic-moments-view-decision" data-moments-prompt="viewDecision" class="magic-moments-prompt"></textarea></div>
+                        <div class="kkt-item" style="display:block;"><label class="kkt-item-label" for="magic-moments-friend-decision">人脉好友判断</label><textarea id="magic-moments-friend-decision" data-moments-prompt="friendDecision" class="magic-moments-prompt"></textarea></div>
+                    </div>
+
                     <!-- ===== 后台保活设置 ===== -->
                     <div style="margin: 20px 0 15px; padding-top: 18px; border-top: 2px solid #f0f0f0; padding-left: 8px;">
                         <div class="kkt-item-label" style="font-weight: bold; color: var(--primary-color);">运行保障设置</div>
@@ -285,6 +302,7 @@
                     <button id="compress-all-images-btn" class="btn btn-secondary" style="width: 100%;">一键压缩聊天图片（生图/原图）</button>
                     <p style="font-size: 12px; color: #999; margin-top: 5px;">扫描所有聊天记录并压缩Base64图片，大幅释放空间</p>
                 </div>
+                <button type="button" id="storage-audit-open" class="btn btn-secondary storage-audit-open">重新检测旧数据</button>
                 
                 <div id="storage-details-list" style="width: 100%; overflow-y: auto;"></div>
                 <button type="button" id="storage-chat-open" class="storage-chat-summary" aria-haspopup="dialog">
@@ -314,6 +332,15 @@
                     </button>
                 </div>
             </main>
+        </div>
+
+        <div id="storage-audit-modal" class="modal-overlay storage-analysis-modal" role="dialog" aria-modal="true" aria-labelledby="storage-audit-title">
+            <div class="modal-window storage-analysis-window">
+                <div class="storage-modal-heading"><div><h3 id="storage-audit-title">旧数据检测</h3><small>扫描所有角色与群聊的历史消息</small></div><button type="button" id="storage-audit-close" class="storage-modal-close" aria-label="关闭旧数据检测">×</button></div>
+                <div id="storage-audit-status" class="storage-audit-status" role="status">准备检测…</div>
+                <div id="storage-audit-results" class="storage-audit-results"></div>
+                <button type="button" id="storage-audit-clean" class="btn btn-secondary storage-audit-clean" hidden>清理可确认的重复副本</button>
+            </div>
         </div>
 
         <div id="storage-chat-modal" class="modal-overlay storage-analysis-modal" role="dialog" aria-modal="true" aria-labelledby="storage-chat-modal-title">
@@ -485,4 +512,3 @@
                 </div>
             </div>
         </div>
-

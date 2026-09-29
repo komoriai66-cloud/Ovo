@@ -24,6 +24,10 @@ function loadGroupSettingsToSidebar() {
     
     themeSelect.value = group.theme || 'white_pink';
     document.getElementById('setting-group-max-memory').value = group.maxMemory;
+    const journalNewestFirstEl = document.getElementById('setting-group-journal-newest-first');
+    if (journalNewestFirstEl) journalNewestFirstEl.checked = group.journalNewestFirst === true;
+    const journalFavoriteTopEl = document.getElementById('setting-group-journal-favorite-top');
+    if (journalFavoriteTopEl) journalFavoriteTopEl.checked = group.journalFavoriteTop !== false;
 
     // --- 群聊 <- 私聊：群成员私聊记忆互通 ---
     const syncPrivateMemoryEl = document.getElementById('setting-group-sync-private-memory');
@@ -489,6 +493,7 @@ async function saveGroupSettingsFromSidebar(showToastFlag = true) {
     group.maxMemory = document.getElementById('setting-group-max-memory').value;
     const groupPokeEnabledEl = document.getElementById('setting-group-poke-enabled');
     group.pokeEnabled = !!(groupPokeEnabledEl && groupPokeEnabledEl.checked);
+    if (window.PokeSystem) window.PokeSystem.updateTriggerUI(group, 'group');
     const groupPokeCharacterEl = document.getElementById('setting-group-poke-character-initiated');
     group.pokeAllowCharacterInitiated = !groupPokeCharacterEl || groupPokeCharacterEl.checked;
     const groupPokeMemberEl = document.getElementById('setting-group-poke-member-to-member');
@@ -522,6 +527,10 @@ async function saveGroupSettingsFromSidebar(showToastFlag = true) {
         ensureAutoJournalState(group);
     }
     group.autoJournalEnabled = document.getElementById('setting-group-auto-journal-enabled').checked;
+    const journalNewestFirstSaveEl = document.getElementById('setting-group-journal-newest-first');
+    if (journalNewestFirstSaveEl) group.journalNewestFirst = journalNewestFirstSaveEl.checked;
+    const journalFavoriteTopSaveEl = document.getElementById('setting-group-journal-favorite-top');
+    if (journalFavoriteTopSaveEl) group.journalFavoriteTop = journalFavoriteTopSaveEl.checked;
     const autoJournalIntervalInput = parseInt(document.getElementById('setting-group-auto-journal-interval').value, 10);
     group.autoJournalInterval = (isNaN(autoJournalIntervalInput) || autoJournalIntervalInput < 10) ? 100 : autoJournalIntervalInput;
     if (window.McpManager && document.getElementById('group-mcp-settings')) group.mcpSettings = window.McpManager.readPermissionEditor(document.getElementById('group-mcp-settings'));
@@ -838,7 +847,7 @@ function generateGroupSystemPrompt(group, opts) {
     prompt += `   - \`[${group.me.nickname}的消息：...]\`: 我的普通聊天消息。\n`;
     prompt += `   - \`[${group.me.nickname} 向 {某个成员真名} 转账：...]\`: 我给某个特定成员转账了。\n`;
     prompt += `   - \`[${group.me.nickname} 向 {某个成员真名} 送来了礼物：...]\`: 我给某个特定成员送了礼物。\n`;
-    prompt += `   - \`[${group.me.nickname}的表情包：...]\`, \`[${group.me.nickname}的语音：...]\`, \`[${group.me.nickname}发来的照片/视频：...]\`: 我发送了特殊类型的消息，群成员可以对此发表评论。\n`;
+    prompt += `   - \`[${group.me.nickname}发送的表情包：...]\`, \`[${group.me.nickname}的语音：...]\`, \`[${group.me.nickname}发来的照片/视频：...]\`: 我发送了特殊类型的消息，群成员可以对此发表评论。\n`;
     prompt += `   - \`[system: ...]\`, \`[...邀请...加入了群聊]\`, \`[...修改群名为...]\`: 系统通知或事件，群成员应据此作出反应，例如欢迎新人、讨论新群名等。\n\n`;
 
     // --- 表情包逻辑 ---

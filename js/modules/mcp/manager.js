@@ -106,7 +106,7 @@
 
   async function showCustomAlert(title, message) {
     if (typeof window.showAppConfirmDialog === 'function') {
-      await window.showAppConfirmDialog({ title, message: String(message || ''), confirmText: '知道了', cancelText: '', dismissText: '' });
+      await window.showAppConfirmDialog({ title, message: String(message || ''), confirmText: '知道了', cancelText: '取消', dismissText: '' });
       return;
     }
     window.alert(`${title}\n\n${message}`);

@@ -299,6 +299,12 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             });
         }
 
+        if (targetChatType === 'private' && window.Moments && typeof window.Moments.consumeAiCommands === 'function') {
+            const momentsResult = await window.Moments.consumeAiCommands(fullResponse, chat);
+            fullResponse = momentsResult.cleaned;
+            if (momentsResult.errors.length) fullResponse += `\n[系统提示：动态操作未完成：${momentsResult.errors.join('；')}]`;
+        }
+
         // 1.8 节点系统：提取摘要
         let extractedNodeSummary = null;
         if (targetChatType === 'private' && chat.activeNodeId) {
@@ -450,9 +456,10 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
                             timestamp: Date.now()
                         });
 
-                        // Keep only last 20 items
-                        if (char.statusPanel.history.length > 20) {
-                            char.statusPanel.history = char.statusPanel.history.slice(0, 20);
+                        const storedLimit = char.statusPanel.historyRetentionLimit;
+                        const retentionLimit = Number.isSafeInteger(storedLimit) && storedLimit >= 0 ? storedLimit : 20;
+                        if (retentionLimit > 0 && char.statusPanel.history.length > retentionLimit) {
+                            char.statusPanel.history = char.statusPanel.history.slice(0, retentionLimit);
                         }
 
                         char.statusPanel.currentStatusRaw = rawStatus;
