@@ -161,7 +161,7 @@ if (retainedLegacyTagErrors.length > 1) {
 }
 
 const logicalInfo = collectDocumentInfo(logicalDocument);
-const protectedDomSignature = '88f15d5f7ff934335d0ce6e0949f52e8c0801bdd0d615fd9d033030178ac5019';
+const protectedDomSignature = 'b37ffbd24430b48dbad004794df812396236c8ec8cd48dcd4170bdcf6e8b8f63';
 const actualDomSignature = getNonScriptDomSignature(logicalDocument);
 if (actualDomSignature !== protectedDomSignature) {
     fail(`Assembled non-script DOM differs from the protected pre-split structure: ${actualDomSignature}`);

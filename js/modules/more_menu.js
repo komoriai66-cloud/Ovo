@@ -40,6 +40,8 @@ function initMoreMenu() {
             if (window.Moments) window.Moments.open();
         } else if (action === 'online') {
             showToast('联机功能正在开发中…');
+        } else if (action === 'tavern-bridge') {
+            showToast('互通酒馆功能正在开发中…');
         }
     });
     });
