@@ -455,6 +455,7 @@ const loadData = async () => {
             globalCssPresets: [],
             homeSignature: '编辑个性签名...',
             forumPosts: [],
+            moments: null,
             forumBindings: { worldBookIds: [], charIds: [], userPersonaIds: [] },
             forumUserProfile: { username: '', avatar: 'https://i.postimg.cc/GtbTnxhP/o-o-1.jpg', bio: '', joinDate: 0 },
             forumSettings: { postsPerGeneration: 8, commentsPerPost: { min: 4, max: 8 }, generateDetailedStranger: false },
@@ -587,6 +588,7 @@ const loadData = async () => {
                 regexPattern: '',
                 replacePattern: '',
                 historyLimit: 3,
+                historyRetentionLimit: 20,
                 currentStatusRaw: '',
                 currentStatusHtml: '',
                 history: []

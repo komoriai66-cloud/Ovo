@@ -161,21 +161,27 @@ if (retainedLegacyTagErrors.length > 1) {
 }
 
 const logicalInfo = collectDocumentInfo(logicalDocument);
-const protectedDomSignature = 'c0bd324385ab4c0abbe1aa05c07ccb7b02971a1f851702abae9d980bd8673f70';
+const protectedDomSignature = '88f15d5f7ff934335d0ce6e0949f52e8c0801bdd0d615fd9d033030178ac5019';
 const actualDomSignature = getNonScriptDomSignature(logicalDocument);
 if (actualDomSignature !== protectedDomSignature) {
     fail(`Assembled non-script DOM differs from the protected pre-split structure: ${actualDomSignature}`);
 }
 const textualIds = [...logicalHtml.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map(match => match[1]);
 const duplicateIds = [...new Set(textualIds.filter((id, index) => textualIds.indexOf(id) !== index))];
-if (textualIds.length !== 2456) fail(`Expected 2456 assembled IDs, found ${textualIds.length}`);
+if (textualIds.length !== 2585) fail(`Expected 2585 assembled IDs, found ${textualIds.length}`);
 if (duplicateIds.length) fail(`Duplicate assembled IDs: ${duplicateIds.join(', ')}`);
 
 const requiredIds = [
     'home-screen', 'chat-list-screen', 'contacts-screen', 'chat-room-screen',
     'api-settings-screen', 'api-generation-params', 'api-generation-reset-values',
     'api-node-editor-screen', 'api-node-edit-form', 'api-node-generation-mode', 'api-node-generation-params',
-    'chat-settings-screen', 'group-settings-screen',
+    'chat-settings-screen', 'group-settings-screen', 'setting-show-debug-content',
+    'setting-journal-newest-first', 'setting-group-journal-newest-first',
+    'storage-audit-open', 'storage-audit-modal', 'storage-audit-title', 'storage-audit-close',
+    'storage-audit-status', 'storage-audit-results', 'storage-audit-clean',
+    'moments-screen', 'moments-compose-screen', 'moments-detail-screen', 'moments-settings-screen', 'moments-contacts-screen', 'moments-story-viewer',
+    'setting-moments-post-enabled', 'setting-moments-story-enabled', 'setting-moments-browse-enabled', 'setting-moments-contacts-enabled',
+    'moments-default-view-mode', 'moments-compose-view-mode', 'moments-result-dialog', 'moments-result-content', 'moments-friend-dialog', 'moments-friend-send', 'magic-room-moments-prompts',
     'setting-auto-expand-translation', 'setting-group-auto-expand-translation',
     'memory-table-screen', 'forum-screen', 'peek-screen', 'node-system-screen',
     'peek-clear-modal', 'peek-clear-real-orders', 'peek-clear-cancel', 'peek-clear-confirm',

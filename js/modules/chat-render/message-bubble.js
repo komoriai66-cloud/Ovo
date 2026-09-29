@@ -1,5 +1,8 @@
 function createMessageBubbleElement(message, isContinuous = false) {
     const chat = (currentChatType === 'private') ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
+    const showDebugContent = currentChatType === 'private' && !!chat.showDebugContent;
+    const debugVisible = isDebugMode || showDebugContent;
+    if (message.isMomentsActivity && !chat?.momentsSettings?.showActivityNarration) return null;
     // 旧版 MCP 活动卡没有消息 id；使用活动 id 补齐，沿用聊天的长按删除流程。
     if (message.type === 'mcp_activity' && !message.id && message.mcpActivity?.id) {
         message.id = `mcp_${message.mcpActivity.id}`;
@@ -16,7 +19,7 @@ function createMessageBubbleElement(message, isContinuous = false) {
         isThinking = true;
     }
 
-    if (isThinking && (message.thinkingDisplay === 'summary' || message.thinkingDisplay === 'detail')) {
+    if (isThinking && !showDebugContent && (message.thinkingDisplay === 'summary' || message.thinkingDisplay === 'detail')) {
         const wrapper = document.createElement('div');
         wrapper.className = 'message-wrapper received cot-thinking-visible';
         wrapper.dataset.id = id || '';
@@ -34,9 +37,9 @@ function createMessageBubbleElement(message, isContinuous = false) {
     }
 
     // 拦截：如果是状态更新、思考过程或转账指令消息，且没开调试模式，直接不渲染
-    if ((isStatusUpdate || isThinking || message.isTransferAction) && !isDebugMode) return null;
+    if ((isStatusUpdate || isThinking || message.isTransferAction) && !debugVisible) return null;
     // 拦截：hiddenFromDisplay 标记的消息（如角色自知上下文消息），不渲染成气泡
-    if (message.hiddenFromDisplay && !isDebugMode) return null;
+    if (message.hiddenFromDisplay && !debugVisible) return null;
 
     if (message.type === 'poke' && window.PokeSystem) {
         return window.PokeSystem.renderMessage(message, chat);
@@ -368,23 +371,42 @@ const contentMatch = content.match(/^\[.*?(?:消息|回复)[：:]([\s\S]+)\]$/);
     const avatarActionMatch = content.match(/^\[avatar-action:([\s\S]+?)\]$/);
     const isHiddenAvatarAction = !!avatarActionMatch && !chat.showAvatarActionMsg;
     // 在这里增加 || isThinking，只要标记为思考中，就强制走隐形消息逻辑
-    if (invisibleRegex.test(content) || privateRegex.test(content) || privateEndRegex.test(content) || isThinking || isHiddenReminder || isHiddenAvatarAction) {
-        if (!isDebugMode) return null; 
+    if (invisibleRegex.test(content) || privateRegex.test(content) || privateEndRegex.test(content) || isThinking || isHiddenReminder || isHiddenAvatarAction || (showDebugContent && (isStatusUpdate || message.isTransferAction || message.hiddenFromDisplay))) {
+        if (!debugVisible) return null;
         isDebugHiddenMsg = true;       
     }
 
     const wrapper = document.createElement('div');
     wrapper.dataset.id = id;
     if (isDebugHiddenMsg) {
-        wrapper.className = 'message-wrapper received';
-        if (message.isContextDisabled) wrapper.classList.add('context-disabled'); 
-        const bubbleRow = document.createElement('div');
-        bubbleRow.className = 'message-bubble-row';
-        const bubble = document.createElement('div');
-        bubble.className = 'message-bubble debug-visible'; 
-        bubble.textContent = content; 
-        bubbleRow.appendChild(bubble);
-        wrapper.appendChild(bubbleRow);
+        wrapper.className = showDebugContent ? 'message-wrapper received debug-thought-visible' : 'message-wrapper received';
+        if (showDebugContent) {
+            wrapper.dataset.debugTimestamp = String(timestamp || 0);
+            if (message.replyRequestId) wrapper.dataset.replyRequestId = message.replyRequestId;
+            const details = document.createElement('details');
+            details.className = 'debug-thought-details';
+            const summary = document.createElement('summary');
+            summary.textContent = '我思故我在';
+            const body = document.createElement('div');
+            body.className = 'debug-thought-body';
+            const entry = document.createElement('div');
+            entry.className = 'message-wrapper debug-thought-entry';
+            entry.dataset.id = id || '';
+            if (message.isContextDisabled) entry.classList.add('context-disabled');
+            entry.textContent = String(content || '');
+            body.appendChild(entry);
+            details.append(summary, body);
+            wrapper.appendChild(details);
+        } else {
+            if (message.isContextDisabled) wrapper.classList.add('context-disabled');
+            const bubbleRow = document.createElement('div');
+            bubbleRow.className = 'message-bubble-row';
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble debug-visible';
+            bubble.textContent = content;
+            bubbleRow.appendChild(bubble);
+            wrapper.appendChild(bubbleRow);
+        }
         return wrapper;
     }
 
@@ -478,6 +500,11 @@ const contentMatch = content.match(/^\[.*?(?:消息|回复)[：:]([\s\S]+)\]$/);
                     }
                 }, 300);
             });
+            wrapper.appendChild(bubble);
+        } else if (message.isMomentsActivity) {
+            const bubble = document.createElement('div');
+            bubble.className = 'system-notification-bubble';
+            bubble.textContent = bubbleText;
             wrapper.appendChild(bubble);
         } else {
             wrapper.innerHTML = `<div class="system-notification-bubble">${bubbleText}</div>`;

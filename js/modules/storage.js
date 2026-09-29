@@ -59,6 +59,128 @@
     window.__storageConsoleAddLog = pushLog;
 })();
 
+// 与存储分析的内容占用口径一致，按字段估算，不复制大段消息文本。
+function estimateLegacyStorageValue(root) {
+    const stack = [root];
+    const seen = new Set();
+    let size = 0;
+    while (stack.length) {
+        const value = stack.pop();
+        if (value == null) size += 4;
+        else if (typeof value === 'string') size += value.length + 2;
+        else if (typeof value === 'number' || typeof value === 'boolean') size += String(value).length;
+        else if (typeof value === 'object') {
+            if (seen.has(value)) continue;
+            seen.add(value);
+            size += 2;
+            if (Array.isArray(value)) {
+                size += Math.max(0, value.length - 1);
+                for (const item of value) stack.push(item);
+            } else {
+                const entries = Object.entries(value);
+                size += Math.max(0, entries.length - 1);
+                for (const [key, item] of entries) {
+                    size += key.length + 3;
+                    stack.push(item);
+                }
+            }
+        }
+    }
+    return size;
+}
+
+async function analyzeLegacyChatStorage(collections, onProgress) {
+    const fieldLabels = {
+        content: '消息正文', parts: '消息附加内容', stickerData: '表情包数据',
+        _regenVersions: '重说旧版本', _imageVersions: '生图旧版本',
+        novelAiImageUrl: '生图图片', imageGenerationMeta: '生图原图与信息', other: '其他字段'
+    };
+    const fields = Object.fromEntries(Object.keys(fieldLabels).map(key => [key, 0]));
+    const otherFields = Object.create(null);
+    const partTypes = { text: 0, image: 0, sticker: 0, other: 0 };
+    const largestChats = [];
+    const largestMessages = [];
+    const chats = collections.flatMap(([items, type]) => (items || []).map(chat => ({ chat, type })));
+    const report = { chats: chats.length, messages: 0, size: 0, cleanableCopies: 0,
+        cleanableSize: 0, retainedCopies: 0, retainedSize: 0, fields, otherFields, partTypes, largestChats, largestMessages };
+    const keepLargest = (list, item) => {
+        list.push(item);
+        list.sort((a, b) => b.size - a.size);
+        if (list.length > 5) list.pop();
+    };
+    let scanned = 0;
+    for (const { chat, type } of chats) {
+        let chatSize = 0;
+        const chatFields = Object.fromEntries(Object.keys(fieldLabels).map(key => [key, 0]));
+        const history = Array.isArray(chat?.history) ? chat.history : [];
+        for (let index = 0; index < history.length; index++) {
+            const message = history[index];
+            if (!message || typeof message !== 'object') continue;
+            let messageSize = 2;
+            let biggestField = 'other';
+            let biggestSize = 0;
+            for (const [key, value] of Object.entries(message)) {
+                const field = Object.hasOwn(fieldLabels, key) ? key : 'other';
+                const size = key.length + 3 + estimateLegacyStorageValue(value);
+                fields[field] += size;
+                chatFields[field] += size;
+                if (field === 'other') otherFields[key] = (otherFields[key] || 0) + size;
+                if (key === 'parts' && Array.isArray(value)) {
+                    for (const part of value) {
+                        const type = part?.type === 'text' || part?.type === 'image' || part?.type === 'sticker' ? part.type : 'other';
+                        partTypes[type] += estimateLegacyStorageValue(part);
+                    }
+                }
+                messageSize += size;
+                if (size > biggestSize) { biggestSize = size; biggestField = field === 'other' ? key : field; }
+            }
+            chatSize += messageSize;
+            report.messages++;
+            keepLargest(largestMessages, { name: chat.remarkName || chat.realName || chat.name || '未命名会话',
+                index: index + 1, size: messageSize, field: fieldLabels[biggestField] || biggestField });
+
+            const parts = Array.isArray(message.parts) ? message.parts : [];
+            const imagePart = parts.find(part => part?.type === 'image' && typeof part.data === 'string');
+            if (imagePart && typeof message.content === 'string'
+                && message.content.startsWith('data:image/') && message.content === imagePart.data) {
+                report.cleanableCopies++;
+                report.cleanableSize += message.content.length;
+            }
+            if (message.imageGenerationMeta?.originalImageUrl
+                && message.imageGenerationMeta.originalImageUrl === message.novelAiImageUrl) {
+                report.cleanableCopies++;
+                report.cleanableSize += message.imageGenerationMeta.originalImageUrl.length;
+            }
+            for (const version of (Array.isArray(message._imageVersions) ? message._imageVersions : [])) {
+                if (version?.metadata?.originalImageUrl && version.metadata.originalImageUrl === version.imageUrl) {
+                    report.cleanableCopies++;
+                    report.cleanableSize += version.metadata.originalImageUrl.length;
+                }
+            }
+            if (typeof message.content === 'string' && parts.some(part => part?.type === 'text' && part.text === message.content)) {
+                report.retainedCopies++;
+                report.retainedSize += message.content.length;
+            }
+            if (typeof message.stickerData === 'string' && parts.some(part => part?.type === 'sticker' && part.data === message.stickerData)) {
+                report.retainedCopies++;
+                report.retainedSize += message.stickerData.length;
+            }
+            scanned++;
+            if (scanned % 200 === 0) {
+                onProgress?.(scanned, chats.length);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        }
+        report.size += chatSize;
+        if (history.length) {
+            const mainField = Object.entries(chatFields).sort((a, b) => b[1] - a[1])[0]?.[0] || 'other';
+            keepLargest(largestChats, { name: chat.remarkName || chat.realName || chat.name || '未命名会话',
+                type, messages: history.length, size: chatSize, field: fieldLabels[mainField] });
+        }
+    }
+    return report;
+}
+
 function setupStorageAnalysisScreen() {
     const screen = document.getElementById('storage-analysis-screen');
     const chartContainer = document.getElementById('storage-chart-container');
@@ -236,6 +358,129 @@ function setupStorageAnalysisScreen() {
         });
     }
 
+    const auditModal = document.getElementById('storage-audit-modal');
+    const auditOpen = document.getElementById('storage-audit-open');
+    const auditClose = document.getElementById('storage-audit-close');
+    const auditStatus = document.getElementById('storage-audit-status');
+    const auditResults = document.getElementById('storage-audit-results');
+    const auditClean = document.getElementById('storage-audit-clean');
+    let auditReport = null;
+    let auditRunning = false;
+
+    function renderAuditReport(report) {
+        auditResults.replaceChildren();
+        const summary = document.createElement('p');
+        summary.className = 'storage-audit-summary';
+        summary.textContent = `已检测 ${report.chats} 个会话、${report.messages} 条消息；历史消息约 ${formatBytes(report.size)}。`;
+        auditResults.appendChild(summary);
+
+        const addSection = (title, rows) => {
+            const heading = document.createElement('h4');
+            heading.textContent = title;
+            auditResults.appendChild(heading);
+            rows.forEach(([label, value]) => {
+                const row = document.createElement('div');
+                row.className = 'storage-audit-row';
+                const name = document.createElement('span');
+                name.textContent = label;
+                const amount = document.createElement('strong');
+                amount.textContent = value;
+                row.append(name, amount);
+                auditResults.appendChild(row);
+            });
+        };
+        addSection('占用来源', [
+            ['消息正文', report.fields.content], ['消息附加内容', report.fields.parts],
+            ['表情包数据', report.fields.stickerData], ['重说旧版本', report.fields._regenVersions],
+            ['生图旧版本', report.fields._imageVersions], ['生图图片与原图', report.fields.novelAiImageUrl + report.fields.imageGenerationMeta],
+            ['其他字段', report.fields.other]
+        ].filter(([, size]) => size > 0).sort((a, b) => b[1] - a[1]).map(([label, size]) => [label, formatBytes(size)]));
+        if (report.fields.parts) addSection('消息附加内容细分', [
+            ['文字', report.partTypes.text], ['图片', report.partTypes.image],
+            ['表情包', report.partTypes.sticker], ['其他', report.partTypes.other]
+        ].filter(([, size]) => size > 0).sort((a, b) => b[1] - a[1]).map(([label, size]) => [label, formatBytes(size)]));
+        const otherFields = Object.entries(report.otherFields).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        if (otherFields.length) addSection('其他字段中占用较多的', otherFields.map(([name, size]) => [name, formatBytes(size)]));
+        addSection('占用最多的会话', report.largestChats.map(item =>
+            [`${item.name}（${item.type === 'group' ? '群聊' : '角色'}，${item.messages} 条） · 主要：${item.field}`, formatBytes(item.size)]));
+        addSection('占用最多的消息', report.largestMessages.map(item =>
+            [`${item.name} · 第 ${item.index} 条 · ${item.field}`, formatBytes(item.size)]));
+
+        const note = document.createElement('p');
+        note.className = 'storage-audit-note';
+        note.textContent = report.cleanableCopies
+            ? `发现 ${report.cleanableCopies} 处完全相同的图片副本，预计可清理约 ${formatBytes(report.cleanableSize)}。`
+            : '没有发现当前规则可安全清理的图片副本。';
+        auditResults.appendChild(note);
+        if (report.retainedCopies) {
+            const retained = document.createElement('p');
+            retained.className = 'storage-audit-note';
+            retained.textContent = `另有 ${report.retainedCopies} 处正文或表情包在不同字段中重复（约 ${formatBytes(report.retainedSize)}）；当前显示或发送逻辑仍使用这些字段，本次不会删除。`;
+            auditResults.appendChild(retained);
+        }
+        auditClean.hidden = !report.cleanableCopies;
+    }
+
+    async function runStorageAudit() {
+        if (auditRunning) return;
+        auditRunning = true;
+        auditClean.hidden = true;
+        auditResults.replaceChildren();
+        auditStatus.textContent = '正在扫描旧聊天数据…';
+        try {
+            auditReport = await analyzeLegacyChatStorage(
+                [[db.characters || [], 'private'], [db.groups || [], 'group']],
+                count => { auditStatus.textContent = `正在扫描…已检查 ${count} 条消息`; }
+            );
+            renderAuditReport(auditReport);
+            auditStatus.textContent = '检测完成。占用为估算值，不代表浏览器实际磁盘用量。';
+        } catch (error) {
+            auditReport = null;
+            auditStatus.textContent = '检测失败：' + (error?.message || '未知错误');
+            console.error('旧数据检测失败:', error);
+        } finally {
+            auditRunning = false;
+        }
+    }
+    auditOpen?.addEventListener('click', () => {
+        auditModal?.classList.add('visible');
+        auditClose?.focus();
+        void runStorageAudit();
+    });
+    function closeAuditModal() {
+        auditModal?.classList.remove('visible');
+        auditOpen?.focus();
+    }
+    auditClose?.addEventListener('click', closeAuditModal);
+    auditModal?.addEventListener('click', event => { if (event.target === auditModal) closeAuditModal(); });
+    auditClean?.addEventListener('click', async () => {
+        if (!auditReport?.cleanableCopies || auditRunning) return;
+        const confirmed = await showAppConfirmDialog({
+            title: '清理重复图片副本',
+            message: `将重新核对并清理 ${auditReport.cleanableCopies} 处完全相同的图片副本。聊天文字、重说版本和表情包不会删除。确定继续吗？`,
+            confirmText: '确认清理', cancelText: '取消', dismissText: ''
+        });
+        if (confirmed !== 'confirm') { auditClean.focus(); return; }
+        auditRunning = true;
+        auditOpen.disabled = true;
+        auditClean.disabled = true;
+        auditStatus.textContent = '正在清理并逐个保存会话…';
+        try {
+            const result = await compactLegacyChatMedia();
+            auditStatus.textContent = `已整理 ${result.chats} 个会话，移除约 ${formatBytes(result.duplicateCharacters)} 重复图片内容。`;
+            auditReport = await analyzeLegacyChatStorage([[db.characters || [], 'private'], [db.groups || [], 'group']]);
+            renderAuditReport(auditReport);
+        } catch (error) {
+            auditStatus.textContent = '清理未完成：' + (error?.message || '未知错误');
+            console.error('旧数据清理失败:', error);
+        } finally {
+            auditRunning = false;
+            auditOpen.disabled = false;
+            auditClean.disabled = false;
+            if (auditModal?.classList.contains('visible')) auditClose?.focus();
+        }
+    });
+
     document.getElementById('storage-chat-open')?.addEventListener('click', () => {
         chatModal?.classList.add('visible');
         chatSearch?.focus();
@@ -248,12 +493,15 @@ function setupStorageAnalysisScreen() {
     chatModal?.addEventListener('click', event => { if (event.target === chatModal) closeChatModal(); });
     [chatSearch, chatType, chatSort].forEach(control => control?.addEventListener(control === chatSearch ? 'input' : 'change', renderChatList));
     document.addEventListener('keydown', event => {
-        const activeModal = [document.getElementById('storage-console-modal'), chatModal]
+        if (auditModal?.classList.contains('visible')
+            && document.getElementById('app-confirm-dialog')?.classList.contains('visible')) return;
+        const activeModal = [document.getElementById('storage-console-modal'), chatModal, auditModal]
             .find(modal => modal?.classList.contains('visible'));
         if (!activeModal) return;
         if (event.key === 'Escape') {
             event.preventDefault();
             if (activeModal === chatModal) closeChatModal();
+            else if (activeModal === auditModal) closeAuditModal();
             else document.getElementById('storage-console-close')?.click();
         } else if (event.key === 'Tab') {
             const focusable = [...activeModal.querySelectorAll('button, input, select')].filter(el => !el.disabled);
@@ -745,7 +993,7 @@ function setupStorageAnalysisScreen() {
             if (!statusContainer) {
                 statusContainer = document.createElement('div');
                 statusContainer.id = 'storage-persistence-status';
-                statusContainer.style.cssText = "padding: 12px; background: #f8f9fa; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #eee;";
+                statusContainer.style.cssText = "padding: 12px; background: #ffffff; border-radius: 12px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #edf0f3; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);";
                 chartContainer.parentNode.insertBefore(statusContainer, chartContainer);
             }
             
@@ -790,7 +1038,7 @@ function setupStorageAnalysisScreen() {
 
                 const quotaDiv = document.createElement('div');
                 quotaDiv.id = 'storage-quota-status';
-                quotaDiv.style.cssText = "padding: 12px; background: #f8f9fa; border-radius: 12px; margin-bottom: 20px; border: 1px solid #eee;";
+                quotaDiv.style.cssText = "padding: 12px; background: #ffffff; border-radius: 12px; margin-bottom: 14px; border: 1px solid #edf0f3; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);";
                 quotaDiv.innerHTML = `
                     <div style="font-weight:600;font-size:15px;color:#333;margin-bottom:8px;">存储空间用量</div>
                     <div style="background:#eee;border-radius:4px;height:8px;overflow:hidden;margin-bottom:6px;">

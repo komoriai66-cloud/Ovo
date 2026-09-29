@@ -452,7 +452,7 @@ function addMessageBubble(message, targetChatId, targetChatType) {
                     messageArea.appendChild(timeDivider);
                 }
 
-                messageArea.appendChild(bubbleElement);
+                appendChatBubble(messageArea, bubbleElement);
                 
                 // 节点系统：渲染独立摘要
                 if (message.nodeSummary) {

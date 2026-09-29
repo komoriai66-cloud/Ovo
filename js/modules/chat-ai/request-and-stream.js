@@ -13,6 +13,37 @@ function restoreMissingThinkingStart(response, cotEnabled, chat) {
     return missingStart ? missingStart.start + response : response;
 }
 
+function collapseStickerPartsForAI(parts) {
+    const result = [];
+    for (const part of parts) {
+        if (part.type !== 'sticker') {
+            result.push(part);
+            continue;
+        }
+
+        let nameIndex = -1;
+        for (let i = result.length - 1; i >= 0; i--) {
+            const item = result[i];
+            if ((item.type === 'text' || item.type === 'html') &&
+                typeof item.text === 'string' &&
+                /\[[^\]]+(?:发送的|的)表情包[：:][^\]]+\]/.test(item.text)) {
+                nameIndex = i;
+                break;
+            }
+        }
+        const description = typeof part.description === 'string' ? part.description.trim() : '';
+        if (nameIndex >= 0) {
+            if (description) {
+                const namePart = result[nameIndex];
+                result[nameIndex] = { ...namePart, text: `${namePart.text}（同一张表情包的画面：${description}）` };
+            }
+        } else {
+            result.push({ type: 'text', text: description ? `[一个表情包，画面：${description}]` : '[一个表情包]' });
+        }
+    }
+    return result;
+}
+
 async function getAiReply(chatId, chatType, isBackground = false, isSummary = false, isCharBlockedMonologue = false, isPhoneControlRevokeAttempt = false, replyOptions = {}) {
     if (isGenerating && !isBackground && !replyOptions.recoveryTaskId) return;
 
@@ -205,7 +236,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 
     try {
         let requestBody;
-        let historySlice = chat.history.slice(-chat.maxMemory);
+        let historySlice = chat.history.filter(message => !message.isMomentsActivity).slice(-chat.maxMemory);
         
         // 节点系统：上下文截断与记忆隔离
         if (chatType === 'private' && chat.activeNodeId && chat.nodes) {
@@ -221,7 +252,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 }
                 if (startIndex !== -1) {
                     // 无论是否开启 readMemory，当前对话视口严格只保留节点内的消息
-                    const nodeMsgs = chat.history.slice(startIndex + 1);
+                    const nodeMsgs = chat.history.slice(startIndex + 1).filter(message => !message.isMomentsActivity);
                     historySlice = nodeMsgs.slice(-chat.maxMemory);
                     
                     // 上下文截断 (保留摘要)
@@ -310,6 +341,10 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
 
         let systemPrompt;
         if (chatType === 'private') {
+            if (!isSummary && window.Moments && typeof window.Moments.prepareForChat === 'function') {
+                const lastUserText = [...historySlice].reverse().find(message => message.role === 'user')?.content || '';
+                await window.Moments.prepareForChat(chat, lastUserText, isBackground);
+            }
             if (chat.memoryMode === 'vector' && typeof prepareVectorMemoryContext === 'function') {
                 try {
                     await prepareVectorMemoryContext(chat);
@@ -394,7 +429,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                     let content = `[${chat.myName}引用“${msg.quote.content}”并回复：${replyText}]`;
                     parts = [{text: content}];
                 } else if (msg.parts && msg.parts.length > 0) {
-                    parts = msg.parts.map(p => {
+                    parts = collapseStickerPartsForAI(msg.parts).map(p => {
                         if (p.type === 'text' || p.type === 'html') {
                             return {text: p.text};
                         } else if (p.type === 'image') {
@@ -410,12 +445,6 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                                     }
                                     return {inline_data: {mime_type: match[1], data: match[3]}};
                                 }
-                            }
-                        } else if (p.type === 'sticker') {
-                            if (p.description) {
-                                return {text: `[表情包画面：${p.description}]`};
-                            } else {
-                                return {text: `[一个表情包]`}; // 兜底，不再尝试发送表情包的原图数据给API
                             }
                         }
                         return null;
@@ -547,7 +576,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                } else {
                    if (msg.parts && msg.parts.length > 0) {
                        let prefixAdded = false;
-                       content = msg.parts.map(p => {
+                       content = collapseStickerPartsForAI(msg.parts).map(p => {
                            if (p.type === 'text' || p.type === 'html') {
                                const textContent = (!prefixAdded) ? (prefix + p.text) : p.text;
                                prefixAdded = true;
@@ -574,16 +603,6 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                                    ];
                                } else {
                                    return {type: 'image_url', image_url: {url: p.data}};
-                               }
-                           } else if (p.type === 'sticker') {
-                               if (p.description) {
-                                   const textContent = (!prefixAdded) ? (prefix + `[表情包画面：${p.description}]`) : `[表情包画面：${p.description}]`;
-                                   prefixAdded = true;
-                                   return {type: 'text', text: textContent};
-                               } else {
-                                   const textContent = (!prefixAdded) ? (prefix + `[一个表情包]`) : `[一个表情包]`;
-                                   prefixAdded = true;
-                                   return {type: 'text', text: textContent};
                                }
                            }
                            return null;
