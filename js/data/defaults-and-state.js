@@ -178,12 +178,30 @@ const globalSettingKeys = [
     'phoneControlRecycleBin', 'nodeTemplates', 'nodeSummaryText', 'memoryTableTemplates', 'vectorMemoryTemplates',
     'nightModeSettings', 'homeStatusBarSettings', 'homeLayoutMode', 'freeHomeLayout', 'freeHomeWidgetPresets', 'stickerCategories', 'magicRoom',
     'keepAliveCodeEnabled', 'keepAliveAutoWakeEnabled', 'keepAliveAudioEnabled', 'keepAliveAudioSrc', 'keepAliveAudioName', 'keepAliveAudioLibrary',
-    'ttsPresets', 'weatherApiSettings'
+    'ttsPresets', 'weatherApiSettings', 'bilingualSettings', 'bilingualTranslations'
 ];
 if (typeof window !== 'undefined') window.globalSettingKeysForBackup = globalSettingKeys;
 
-const appVersion = "6.9.3";
+const appVersion = "6.9.4";
 const updateLog = [
+    {
+        version: "6.9.4",
+        date: "2026-09-30",
+        notes: [
+            "新增与完善",
+            "动态支持批量生成人脉：可按所属角色分组，逐人指定性别、关系和补充要求；生成后可检查、修改、重生成或补齐缺少的人脉，再选择要保存的结果。头像、背景和扩展设定可按需开启。",
+            "人脉可关联世界书：生成时可参考选中的内容，并选择随分类更新或锁定当前条目，方便保持人物设定一致。",
+            "新增动态网名：角色、人脉和当前用户身份可分别设置只在动态中显示的名字；可控制角色是否感知网名、是否允许自主改名，并为具体角色或人脉单独设置。",
+            "动态评论支持编辑和删除。修改自己的评论后，可让角色按新内容重新回复；修改前的回复可在记录中查看。",
+            "双语模式扩展到动态、查手机、角色日记、论坛小号、电量心声、番茄钟、小剧场和好友申请。可指定角色常用语言，并选择点击查看译文或默认同时显示；译文会缓存。",
+            "————",
+            "修复与优化",
+            "修复修改动态评论后，生成中的旧回复仍可能按修改前内容写入的问题。",
+            "修复群聊双语气泡可能影响未指定成员的问题。",
+            "修复重命名世界书分类后，已绑定该分类的人脉可能失去关联的问题。",
+            "群聊拍一拍入口移至聊天拓展，避免占用聊天顶栏空间。"
+        ]
+    },
     {
         version: "6.9.3",
         date: "2026-09-28",
@@ -806,6 +824,8 @@ notes: [
 var db = {
     characters: [],
     groups: [],
+    bilingualSettings: { display: 'click', scopes: { moments: true, peek: true, journal: true, forum: true, battery: true, pomodoro: true, theater: true, friendRequest: true } },
+    bilingualTranslations: {},
     apiSettings: {},
     summaryApiSettings: {},
     backgroundApiSettings: {},

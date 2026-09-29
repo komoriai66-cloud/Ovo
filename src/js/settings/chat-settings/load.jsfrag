@@ -493,6 +493,8 @@ function loadSettingsToSidebar() {
         }
 
         document.getElementById('setting-bilingual-mode').checked = e.bilingualModeEnabled || false;
+        document.getElementById('setting-bilingual-language').value = e.bilingualLanguage || '';
+        BilingualContent.syncSettingsUi();
         document.getElementById('setting-bilingual-style').value = e.bilingualBubbleStyle || 'under';
         document.getElementById('setting-auto-expand-translation').checked = e.autoExpandTranslation === true;
 

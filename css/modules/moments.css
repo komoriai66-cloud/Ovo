@@ -156,6 +156,12 @@
 .moments-settings-card h2 { margin:0 0 10px; font-size:14px; font-weight:600; color:#111; }
 .moments-field { display:block; margin:9px 0; color:#444; font-size:12.5px; }
 .moments-field input, .moments-field textarea, .moments-field select, .moments-editor-panel input, .moments-editor-panel textarea, .moments-editor-panel select { display:block; width:100%; min-width:0; margin-top:5px; border:1px solid #e2e8f0; border-radius:8px; background:#ffffff; color:#181818; padding:8px 10px; outline-color:#111; font-family:inherit; font-size:13px; line-height:1.4; }
+.moments-nickname-switches { display:grid; gap:2px; }
+.moments-nickname-switches label { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:32px; color:#444; font-size:12.5px; }
+.moments-nickname-switches input { flex:none; width:16px; height:16px; margin:0; accent-color:#111; }
+.moments-contact-nickname-options { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:7px; }
+.moments-contact-nickname-options label { display:flex; align-items:center; gap:4px; min-width:0; color:#666; font-size:10.5px; }
+.moments-contact-nickname-options select { min-width:0; max-width:92px; padding:2px 3px; border:1px solid #e2e8f0; border-radius:5px; background:#fff; color:#333; font:inherit; font-size:10.5px; }
 
 /* 详情评论区 */
 .moments-detail-comments { padding:8px 16px 30px; background:#fff; }
@@ -167,6 +173,17 @@
 .moments-detail-comment p { margin:3px 0; font-size:12.5px; line-height:1.55; color:#333; overflow-wrap:anywhere; }
 .moments-detail-comment small { color:#999; font-size:10.5px; }
 .moments-detail-comment button { margin-left:8px; padding:0; border:0; background:transparent; color:#555; font-size:10.5px; cursor:pointer; }
+.moments-detail-comment button:disabled { color:#aaa; cursor:default; }
+.moments-detail-comment button.moments-comment-delete { color:#bd4747; }
+.moments-comment-deleted { color:#999; }
+.moments-comment-history { margin:8px 0 0; padding:7px 9px; border-radius:5px; background:#f7f7f8; color:#666; font-size:11px; }
+.moments-comment-history summary { cursor:pointer; }
+.moments-comment-history-entry { margin-top:7px; border-top:1px solid #e9e9eb; padding-top:6px; }
+.moments-comment-history-entry small { display:block; overflow-wrap:anywhere; }
+.moments-comment-history-entry p { margin:4px 0; }
+#moments-comment-edit-text { display:block; width:100%; min-height:92px; margin-top:12px; padding:9px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#222; font:inherit; font-size:12.5px; line-height:1.55; outline-color:#111; resize:vertical; }
+#moments-comment-edit-dialog .moments-inline-actions { justify-content:flex-end; }
+#moments-comment-edit-dialog .moments-inline-actions button { min-width:65px; }
 
 .moments-picker-choice { display:flex; gap:8px; align-items:center; min-height:36px; font-size:12.5px; }
 .moments-picker-choice input { width:auto; margin:0; accent-color:#111; }
@@ -186,8 +203,62 @@
 .moments-contact-flags { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
 .moments-contact-flags label { display:flex; align-items:center; gap:3px; color:#666; font-size:10.5px; }
 .moments-contact-flags input { margin:0; }
+.moments-batch-panel { width:min(100%,560px) !important; max-height:min(90vh,760px) !important; }
+.moments-batch-panel h2 { margin-bottom:8px; }
+.moments-batch-group, .moments-batch-candidate { min-width:0; margin:10px 0; padding:10px; border:1px solid #edf0f3; border-radius:9px; }
+.moments-batch-row { display:flex; flex-wrap:wrap; gap:8px; min-width:0; }
+.moments-batch-row > .moments-field { flex:1 1 115px; min-width:0; }
+.moments-batch-row > .moments-field.moments-batch-count { flex:0 1 80px; }
+.moments-batch-people { margin-top:9px; }
+.moments-batch-person { min-width:0; margin-top:7px; padding:8px; border:1px solid #edf0f3; border-radius:8px; }
+.moments-batch-person > strong { display:block; font-size:11.5px; font-weight:600; }
+.moments-batch-person .moments-field { margin:5px 0; }
+.moments-batch-person .moments-batch-row > .moments-field { flex:1 1 135px; }
+.moments-batch-row button { align-self:center; border:1px solid #e2e8f0; border-radius:18px; padding:6px 10px; background:#fff; color:#333; font:inherit; font-size:11.5px; cursor:pointer; }
+.moments-batch-group [hidden] { display:none !important; }
+.moments-batch-group-head, .moments-batch-candidate-head { display:flex; align-items:center; gap:8px; min-width:0; }
+.moments-batch-group-head strong, .moments-batch-candidate-head strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; }
+.moments-batch-group-head button, .moments-batch-candidate-head button, .moments-batch-world button { border:0; background:transparent; color:#555; font:inherit; font-size:11.5px; cursor:pointer; }
+.moments-batch-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 10px; margin-top:12px; }
+.moments-batch-options label, .moments-batch-world-choice { display:flex; align-items:center; gap:6px; min-width:0; color:#444; font-size:11.5px; line-height:1.4; }
+.moments-batch-options input[type=checkbox], .moments-batch-world-choice input[type=checkbox], .moments-batch-candidate-head input[type=checkbox] { appearance:none; flex:none; width:15px; height:15px; margin:0; border:1.5px solid #bbb; border-radius:3px; background:#fff; cursor:pointer; }
+.moments-batch-options input[type=checkbox]:checked, .moments-batch-world-choice input[type=checkbox]:checked, .moments-batch-candidate-head input[type=checkbox]:checked { border-color:#111; background:#111; }
+.moments-batch-options input[type=checkbox]:checked::after, .moments-batch-world-choice input[type=checkbox]:checked::after, .moments-batch-candidate-head input[type=checkbox]:checked::after { content:'✓'; display:block; color:#fff; font-size:11px; line-height:13px; text-align:center; }
+.moments-batch-world-list { max-height:180px; overflow:auto; margin-top:7px; padding:7px; border:1px solid #edf0f3; border-radius:8px; }
+.moments-batch-world-category { margin:7px 0; padding-bottom:5px; border-bottom:1px solid #f2f2f3; }
+.moments-batch-world-category small { display:block; margin:4px 0 4px 21px; color:#888; }
+.moments-batch-world-item { margin:5px 0 5px 15px; }
+.moments-batch-world-item span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.moments-batch-preview { max-width:100%; width:48px; height:48px; object-fit:cover; border-radius:8px; }
+.moments-batch-extra { margin:7px 0; }
+.moments-batch-extra summary { color:#555; font-size:11.5px; cursor:pointer; }
+.moments-batch-extra textarea { min-height:55px; }
+.moments-batch-panel .moments-inline-actions { justify-content:flex-start; }
+.moments-batch-panel .moments-inline-actions button { min-width:0; }
+.moments-batch-panel .moments-inline-actions .moments-primary-btn { color:#fff; }
+.moments-batch-progress { position:absolute; z-index:1; inset:0; display:flex; align-items:center; justify-content:center; padding:14px; }
+.moments-batch-progress[hidden] { display:none !important; }
+.moments-batch-progress-panel { width:min(100%,360px) !important; max-height:min(80vh,360px) !important; border-radius:12px !important; padding:18px 16px !important; }
+.moments-batch-progress-panel h2 { margin:0 0 10px; font-size:15px; }
+.moments-batch-progress-panel > p { margin:8px 0; font-size:12px; line-height:1.5; }
+.moments-batch-progress-track { position:relative; height:7px; overflow:hidden; border-radius:7px; background:#edf0f3; }
+.moments-batch-progress-track span { display:block; width:0; height:100%; border-radius:inherit; background:#222; transition:width .2s ease; }
+.moments-batch-progress-track::after { content:''; position:absolute; top:0; bottom:0; left:-25%; width:25%; background:rgba(120,120,120,.35); animation:moments-batch-wait 1.5s linear infinite; }
+@keyframes moments-batch-wait { to { left:100%; } }
+@media (prefers-reduced-motion:reduce) { .moments-batch-progress-track::after { animation:none; } }
+.moments-batch-progress-panel .moments-inline-actions { justify-content:flex-end; }
+@media (max-width:360px) { .moments-batch-options { grid-template-columns:1fr; } .moments-batch-panel { padding:14px 11px !important; } }
+body.night-mode-active .moments-batch-group, body.night-mode-active .moments-batch-person, body.night-mode-active .moments-batch-candidate, body.night-mode-active .moments-batch-world-list { border-color:#353535; }
+body.night-mode-active .moments-batch-progress-track { background:#353535; }
+body.night-mode-active .moments-batch-progress-track span { background:#ececec; }
+body.night-mode-active .moments-batch-options label, body.night-mode-active .moments-batch-world-choice { color:#d6d6d6; }
+body.night-mode-active .moments-batch-row button { background:#292929; color:#e8e8e8; border-color:#444; }
+body.night-mode-active .moments-batch-options input[type=checkbox], body.night-mode-active .moments-batch-world-choice input[type=checkbox], body.night-mode-active .moments-batch-candidate-head input[type=checkbox] { background:#2a2a2a; border-color:#555; }
+body.night-mode-active .moments-batch-options input[type=checkbox]:checked, body.night-mode-active .moments-batch-world-choice input[type=checkbox]:checked, body.night-mode-active .moments-batch-candidate-head input[type=checkbox]:checked { background:#ececec; border-color:#ececec; }
+body.night-mode-active .moments-batch-options input[type=checkbox]:checked::after, body.night-mode-active .moments-batch-world-choice input[type=checkbox]:checked::after, body.night-mode-active .moments-batch-candidate-head input[type=checkbox]:checked::after { color:#111; }
 
 .moments-picker { position:fixed; z-index:10020; inset:0; display:flex; align-items:flex-end; justify-content:center; }
+#moments-batch-dialog.moments-picker { align-items:center; padding:14px; }
 .moments-picker[hidden], .moments-story-viewer[hidden], .moments-mention-suggestions[hidden] { display:none !important; }
 .moments-picker-shade { position:absolute; inset:0; background:rgba(0,0,0,0.45); }
 .moments-picker-panel, .moments-editor-panel { position:relative; width:min(100%,480px); max-height:80vh; overflow-y:auto; padding:0 16px calc(12px + env(safe-area-inset-bottom)); border-radius:14px 14px 0 0; background:#fff; }
@@ -208,9 +279,9 @@
 .moments-sticker-empty { grid-column:1/-1; padding:32px 8px; color:#999; text-align:center; font-size:12px; }
 .moments-picker-options { max-height:55vh; overflow-y:auto; }
 .moments-picker-options label { display:flex; align-items:center; gap:9px; min-height:44px; border-bottom:1px solid #f2f2f3; font-size:13px; color:#222; }
-.moments-picker-options input[type=checkbox], .moments-contact-flags input[type=checkbox], .moments-picker-choice input[type=checkbox] { appearance:none; flex:none; width:15px; height:15px; margin:0; border:1.5px solid #bbb; border-radius:3px; background:#fff; cursor:pointer; }
-.moments-picker-options input[type=checkbox]:checked, .moments-contact-flags input[type=checkbox]:checked, .moments-picker-choice input[type=checkbox]:checked { border-color:#111; background:#111; }
-.moments-picker-options input[type=checkbox]:checked::after, .moments-contact-flags input[type=checkbox]:checked::after, .moments-picker-choice input[type=checkbox]:checked::after { content:'✓'; display:block; color:#fff; font-size:11px; line-height:13px; text-align:center; }
+.moments-picker-options input[type=checkbox], .moments-contact-flags input[type=checkbox], .moments-picker-choice input[type=checkbox], .moments-nickname-switches input[type=checkbox] { appearance:none; flex:none; width:15px; height:15px; margin:0; border:1.5px solid #bbb; border-radius:3px; background:#fff; cursor:pointer; }
+.moments-picker-options input[type=checkbox]:checked, .moments-contact-flags input[type=checkbox]:checked, .moments-picker-choice input[type=checkbox]:checked, .moments-nickname-switches input[type=checkbox]:checked { border-color:#111; background:#111; }
+.moments-picker-options input[type=checkbox]:checked::after, .moments-contact-flags input[type=checkbox]:checked::after, .moments-picker-choice input[type=checkbox]:checked::after, .moments-nickname-switches input[type=checkbox]:checked::after { content:'✓'; display:block; color:#fff; font-size:11px; line-height:13px; text-align:center; }
 .moments-editor-panel { padding-top:17px; }
 .moments-editor-panel h2 { margin:0 0 14px; font-size:15.5px; font-weight:600; color:#111; }
 .moments-editor-panel .moments-inline-actions { justify-content:flex-end; }
@@ -243,6 +314,7 @@
 #moments-profile-content .moments-profile-header-bar { position:relative; z-index:2; padding:0 18px 16px; background:#ffffff; }
 #moments-profile-content .moments-profile-header-main { position:relative; top:-37px; display:flex; justify-content:flex-end; align-items:flex-end; gap:16px; min-height:44px; margin-bottom:-22px; }
 #moments-profile-content .moments-profile-name { margin:0 0 45px 0; font-size:18px; font-weight:700; color:#ffffff; text-shadow:0 1px 3px rgba(0,0,0,0.7); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:calc(100% - 100px); }
+#moments-profile-content button.moments-profile-name { display:block; min-width:0; padding:0; border:0; background:transparent; font-family:inherit; text-decoration:none; cursor:pointer; }
 
 /* 方形微圆角头像，一半在背景上一半悬在下方 */
 #moments-profile-content .moments-profile-avatar-button { flex:0 0 74px; width:74px; height:74px; padding:0; border:2.5px solid #ffffff; border-radius:10px; background:#e9eaed; box-shadow:0 2px 8px rgba(0,0,0,0.12); cursor:pointer; overflow:hidden; position:relative; }
@@ -309,6 +381,8 @@ body.night-mode-active .moments-interactions b { color:#ececec; }
 body.night-mode-active .moments-result-log { background:#252525; color:#d6d6d6; }
 body.night-mode-active .moments-settings-content { background:#121212; }
 body.night-mode-active .moments-settings-card, body.night-mode-active .moments-picker-panel, body.night-mode-active .moments-editor-panel, body.night-mode-active .moments-picker-head, body.night-mode-active .moments-mention-suggestions { background:#1e1e1e; color:#ececec; border-color:#2e2e2e; }
+body.night-mode-active .moments-nickname-switches label, body.night-mode-active .moments-contact-nickname-options label { color:#d6d6d6; }
+body.night-mode-active .moments-contact-nickname-options select { background:#242424; border-color:#383838; color:#ececec; }
 body.night-mode-active .moments-picker-options label, body.night-mode-active .moments-list-row, body.night-mode-active .moments-compose-options button { border-color:#333; }
 body.night-mode-active .moments-post-dialog-actions button, body.night-mode-active .moments-manage-filters input, body.night-mode-active .moments-manage-filters select, body.night-mode-active .moments-manage-row, body.night-mode-active .moments-manage-footer { background:#1e1e1e; border-color:#333; color:#ececec; }
 body.night-mode-active .moments-post-dialog-actions button.moments-danger, body.night-mode-active .moments-manage-footer button:first-child { color:#f06b6b; }
@@ -317,9 +391,9 @@ body.night-mode-active .moments-manage-toolbar button, body.night-mode-active .m
 body.night-mode-active .moments-manage-row[aria-pressed="true"] { border-color:#999; }
 body.night-mode-active .moments-manage-row[aria-pressed="true"] .moments-manage-check { background:#ececec; border-color:#ececec; color:#111; }
 body.night-mode-active .moments-manage-footer button:last-child { background:#ececec; border-color:#ececec; color:#111; }
-body.night-mode-active .moments-picker-options input[type=checkbox], body.night-mode-active .moments-contact-flags input[type=checkbox], body.night-mode-active .moments-picker-choice input[type=checkbox] { background:#2a2a2a; border-color:#555; }
-body.night-mode-active .moments-picker-options input[type=checkbox]:checked, body.night-mode-active .moments-contact-flags input[type=checkbox]:checked, body.night-mode-active .moments-picker-choice input[type=checkbox]:checked { background:#ececec; border-color:#ececec; }
-body.night-mode-active .moments-picker-options input[type=checkbox]:checked::after, body.night-mode-active .moments-contact-flags input[type=checkbox]:checked::after, body.night-mode-active .moments-picker-choice input[type=checkbox]:checked::after { color:#111; }
+body.night-mode-active .moments-picker-options input[type=checkbox], body.night-mode-active .moments-contact-flags input[type=checkbox], body.night-mode-active .moments-picker-choice input[type=checkbox], body.night-mode-active .moments-nickname-switches input[type=checkbox] { background:#2a2a2a; border-color:#555; }
+body.night-mode-active .moments-picker-options input[type=checkbox]:checked, body.night-mode-active .moments-contact-flags input[type=checkbox]:checked, body.night-mode-active .moments-picker-choice input[type=checkbox]:checked, body.night-mode-active .moments-nickname-switches input[type=checkbox]:checked { background:#ececec; border-color:#ececec; }
+body.night-mode-active .moments-picker-options input[type=checkbox]:checked::after, body.night-mode-active .moments-contact-flags input[type=checkbox]:checked::after, body.night-mode-active .moments-picker-choice input[type=checkbox]:checked::after, body.night-mode-active .moments-nickname-switches input[type=checkbox]:checked::after { color:#111; }
 body.night-mode-active .moments-mention-suggestions button, body.night-mode-active .moments-picker-head button { background:#1e1e1e; color:#ececec; }
 body.night-mode-active #moments-compose-text { color:#ececec; }
 body.night-mode-active .moments-compose-kind button { background:#252525; color:#bbb; border-color:#3a3a3a; }
@@ -332,6 +406,10 @@ body.night-mode-active .moments-result-btn { background:#2a2a2a; color:#b0b0b0; 
 body.night-mode-active .moments-result-btn:active { background:#333; }
 body.night-mode-active .moments-story-item, body.night-mode-active .moments-field, body.night-mode-active .moments-contact-flags label { color:#d6d6d6; }
 body.night-mode-active .moments-comment-composer input { background:#252525; border-color:#333; color:#ececec; }
+body.night-mode-active #moments-comment-edit-text { background:#252525; border-color:#383838; color:#ececec; }
+body.night-mode-active .moments-comment-history { background:#252525; color:#bbb; }
+body.night-mode-active .moments-comment-history-entry { border-color:#383838; }
+body.night-mode-active .moments-detail-comment button.moments-comment-delete { color:#ec8585; }
 body.night-mode-active .moments-reply-target { background:#1e1e1e; color:#bbb; }
 body.night-mode-active .moments-comment-composer .moments-comment-sticker-btn { color:#ddd; }
 body.night-mode-active #moments-sticker-search, body.night-mode-active .moments-sticker-categories button { background:#252525; border-color:#3a3a3a; color:#ddd; }

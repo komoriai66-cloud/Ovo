@@ -161,14 +161,14 @@ if (retainedLegacyTagErrors.length > 1) {
 }
 
 const logicalInfo = collectDocumentInfo(logicalDocument);
-const protectedDomSignature = 'b37ffbd24430b48dbad004794df812396236c8ec8cd48dcd4170bdcf6e8b8f63';
+const protectedDomSignature = 'acf0fdbf6941d00caf66673b3d82e527760cb7bc9fa20ccae76f48ace51ad7c1';
 const actualDomSignature = getNonScriptDomSignature(logicalDocument);
 if (actualDomSignature !== protectedDomSignature) {
-    fail(`Assembled non-script DOM differs from the protected pre-split structure: ${actualDomSignature}`);
+    fail(`Assembled non-script DOM differs from the protected release structure: ${actualDomSignature}`);
 }
 const textualIds = [...logicalHtml.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map(match => match[1]);
 const duplicateIds = [...new Set(textualIds.filter((id, index) => textualIds.indexOf(id) !== index))];
-if (textualIds.length !== 2585) fail(`Expected 2585 assembled IDs, found ${textualIds.length}`);
+if (textualIds.length !== 2619) fail(`Expected 2619 assembled IDs, found ${textualIds.length}`);
 if (duplicateIds.length) fail(`Duplicate assembled IDs: ${duplicateIds.join(', ')}`);
 
 const requiredIds = [
@@ -182,6 +182,9 @@ const requiredIds = [
     'moments-screen', 'moments-compose-screen', 'moments-detail-screen', 'moments-settings-screen', 'moments-contacts-screen', 'moments-story-viewer',
     'setting-moments-post-enabled', 'setting-moments-story-enabled', 'setting-moments-browse-enabled', 'setting-moments-contacts-enabled',
     'moments-default-view-mode', 'moments-compose-view-mode', 'moments-result-dialog', 'moments-result-content', 'moments-friend-dialog', 'moments-friend-send', 'magic-room-moments-prompts',
+    'moments-ai-batch-btn', 'moments-batch-dialog', 'moments-batch-review', 'moments-comment-edit-dialog',
+    'moments-character-name-source', 'moments-character-nickname-awareness', 'moments-contact-nickname-awareness',
+    'setting-bilingual-language', 'setting-bilingual-global-display',
     'setting-auto-expand-translation', 'setting-group-auto-expand-translation',
     'memory-table-screen', 'forum-screen', 'peek-screen', 'node-system-screen',
     'peek-clear-modal', 'peek-clear-real-orders', 'peek-clear-cancel', 'peek-clear-confirm',

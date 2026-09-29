@@ -48,8 +48,7 @@
     function updateTriggerUI(chat, chatType) {
         lastTap = null;
         const title = document.getElementById('chat-room-title');
-        const groupButton = document.getElementById('chat-poke-member-btn');
-        const header = document.getElementById('chat-room-header-default');
+        const groupButton = document.getElementById('group-poke-expansion-btn');
         const titleEnabled = chatType === 'private' && !!chat?.pokeEnabled && allowsTitleTrigger(ensureSettings(chat));
         if (title) {
             title.classList.toggle('poke-title-trigger', titleEnabled);
@@ -58,7 +57,6 @@
         }
         const groupEnabled = chatType === 'group' && !!chat?.pokeEnabled;
         if (groupButton) groupButton.style.display = groupEnabled ? 'flex' : 'none';
-        if (header) header.classList.toggle('poke-member-visible', groupEnabled);
     }
 
     function cleanSuffix(value) {
@@ -397,7 +395,12 @@
         document.addEventListener('click', onTitleClick, true);
         document.addEventListener('contextmenu', onAvatarContextMenu, true);
         document.getElementById('setting-group-poke-member-btn')?.addEventListener('click', showGroupPicker);
-        document.getElementById('chat-poke-member-btn')?.addEventListener('click', showGroupPicker);
+        document.getElementById('group-poke-expansion-btn')?.addEventListener('click', () => {
+            const chat = getChat(currentChatId, currentChatType);
+            if (currentChatType !== 'group' || !chat?.pokeEnabled) return;
+            if (typeof showPanel === 'function') showPanel('none');
+            showGroupPicker();
+        });
         const groupToggle = document.getElementById('setting-group-poke-enabled');
         const groupOptions = document.getElementById('setting-group-poke-options');
         if (groupToggle && groupOptions) {
