@@ -38,6 +38,7 @@ function generatePrivateSystemPrompt(character, opts) {
 
     // 处理用户自定义的底层系统提示词模板
     if (useCustomPrompt && template) {
+        const momentsInTemplate = template.includes('{{动态能力与已看内容}}');
         
         // 构建共同回忆字符串
         let commonMemories = '';
@@ -177,6 +178,7 @@ function generatePrivateSystemPrompt(character, opts) {
             template += '\n' + opts.historyText;
         }
 
+        if (!momentsInTemplate && window.Moments) template += window.Moments.promptForCharacter(character.id);
         return template;
     }
 
@@ -419,6 +421,7 @@ function generatePrivateSystemPrompt(character, opts) {
             nodePrompt += '\n' + opts.historyText;
         }
 
+        if (window.Moments) nodePrompt += window.Moments.promptForCharacter(character.id);
         return nodePrompt;
     }
 
@@ -916,6 +919,7 @@ function generatePrivateSystemPrompt(character, opts) {
         prompt += '\n' + opts.historyText;
     }
 
+    if (window.Moments) prompt += window.Moments.promptForCharacter(character.id);
     return prompt;
 }
 

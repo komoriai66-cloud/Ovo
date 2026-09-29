@@ -70,4 +70,86 @@ assert.equal(groupUserPoke.messages.length, 1);
 assert.equal(groupUserPoke.messages[0].actorId, 'm1');
 
 assert.equal(PokeSystem.cleanSuffix('  的脑袋\n✨  '), '的脑袋 ✨');
+
+const clickHandlers = [];
+const makeClassList = () => {
+    const values = new Set();
+    return {
+        contains: value => values.has(value),
+        toggle(value, enabled) { if (enabled) values.add(value); else values.delete(value); }
+    };
+};
+const title = { classList: makeClassList(), setAttribute() {}, removeAttribute() {} };
+const header = { classList: makeClassList() };
+const groupButton = { style: {}, addEventListener(type, handler) { this[type] = handler; } };
+const screen = { classList: { contains: value => value === 'active' } };
+const interactionContext = {
+    console, Date, Math, setTimeout, clearTimeout,
+    CSS: { escape: value => String(value) },
+    window: {}, db: { characters: [], groups: [] },
+    currentChatId: '', currentChatType: 'private',
+    isInMultiSelectMode: false, isDebugMode: false, isGenerating: false,
+    requestAnimationFrame(callback) { callback(); },
+    messageArea: { querySelectorAll() { return []; } },
+    addMessageBubble() {}, saveCharacter() {}, renderChatList() {},
+    document: {
+        addEventListener(type, handler) { if (type === 'click') clickHandlers.push(handler); },
+        getElementById(id) {
+            return {
+                'chat-room-title': title,
+                'chat-room-header-default': header,
+                'chat-poke-member-btn': groupButton,
+                'chat-room-screen': screen
+            }[id] || null;
+        }
+    }
+};
+vm.createContext(interactionContext);
+vm.runInContext(fs.readFileSync(new URL('../js/modules/poke.js', import.meta.url), 'utf8'), interactionContext);
+interactionContext.window.PokeSystem.init();
+
+function doubleClick(target, targetId = interactionContext.currentChatId) {
+    const event = {
+        target: { closest: selector => selector === '#chat-room-title' && target === 'title' ? title : null },
+        preventDefault() {}, stopPropagation() {}
+    };
+    // The avatar must be the same DOM element for both taps.
+    if (target === 'avatar') {
+        const avatar = { dataset: { pokeTargetId: targetId } };
+        event.target.closest = selector => selector === '.message-avatar[data-poke-target-id]' ? avatar : null;
+    }
+    clickHandlers.forEach(handler => handler(event));
+    clickHandlers.forEach(handler => handler(event));
+}
+
+for (const [mode, avatarMode, target, expected] of [
+    ['auto', 'hidden', 'title', 1],
+    ['auto', 'hidden', 'avatar', 0],
+    ['auto', 'full', 'avatar', 1],
+    ['auto', 'full', 'title', 0],
+    ['avatar', 'hidden', 'title', 0],
+    ['title', 'full', 'title', 1],
+    ['both', 'full', 'avatar', 1],
+    ['both', 'hidden', 'title', 1]
+]) {
+    const chat = { id: `trigger_${mode}_${avatarMode}_${target}`, history: [], pokeEnabled: true, pokeTriggerMode: mode, avatarMode, pokeEffectMode: 'off', pokeVibrationEnabled: false, pokeTriggerReply: false };
+    interactionContext.db.characters.push(chat);
+    interactionContext.currentChatId = chat.id;
+    interactionContext.window.PokeSystem.updateTriggerUI(chat, 'private');
+    doubleClick(target);
+    assert.equal(chat.history.length, expected, `${mode}/${avatarMode}/${target} 触发结果`);
+}
+const groupButtonChat = { id: 'group_trigger', pokeEnabled: true };
+interactionContext.window.PokeSystem.updateTriggerUI(groupButtonChat, 'group');
+assert.equal(groupButton.style.display, 'flex', '群聊开启拍一拍时显示成员入口');
+assert.equal(typeof groupButton.click, 'function', '群聊成员入口已连接选择弹层');
+assert.equal(title.classList.contains('poke-title-trigger'), false, '群名不作为拍一拍目标');
+const interactionGroup = { id: 'group_trigger', history: [], pokeEnabled: true, members: [{ id: 'member_1', groupNickname: '群成员' }] };
+interactionContext.db.groups.push(interactionGroup);
+interactionContext.currentChatId = interactionGroup.id;
+interactionContext.currentChatType = 'group';
+doubleClick('title');
+assert.equal(interactionGroup.history.length, 0, '双击群名不触发拍一拍');
+doubleClick('avatar', 'member_1');
+assert.equal(interactionGroup.history.length, 1, '群成员头像拍一拍保持可用');
 console.log('poke tests passed');

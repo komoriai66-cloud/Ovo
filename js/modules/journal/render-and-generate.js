@@ -125,8 +125,10 @@ function renderJournalList(searchQuery = '') {
 
     const chatInstance = (currentChatType === 'private') ? db.characters.find(c => c.id === currentChatId) : db.groups.find(g => g.id === currentChatId);
     const favoriteTop = chatInstance ? (chatInstance.journalFavoriteTop !== false) : true; // 默认开启
+    const newestFirst = chatInstance && chatInstance.journalNewestFirst === true;
 
     const sortedJournals = [...journals].sort((a, b) => {
+        if (newestFirst) return b.createdAt - a.createdAt;
         if (favoriteTop) {
             if (a.isFavorited && !b.isFavorited) return -1;
             if (!a.isFavorited && b.isFavorited) return 1;
