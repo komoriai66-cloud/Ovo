@@ -401,7 +401,12 @@ ${diaryContext ? `- 长期记忆（日记总结）：\n${diaryContext}` : ''}
             break;
         }
     }
-    return prompt;
+    const authored = {
+        messages: '只有角色本人发送的消息', memos: '备忘录标题和正文', album: '角色对相册的批注',
+        browser: '角色对浏览记录的批注', drafts: '角色未发送的草稿正文', transfer: '角色发给自己的文字',
+        timeThoughts: '角色对童年的描述和想说的话', steps: '角色的运动批注', unlock: '角色小号简介、帖子与角色本人评论'
+    };
+    return prompt + (authored[appType] && typeof BilingualContent !== 'undefined' ? BilingualContent.prompt(char, 'peek', authored[appType]) : '');
 }
 
 async function generateAndRenderPeekContent(appType, options = {}) {

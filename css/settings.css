@@ -3067,3 +3067,14 @@ body.night-mode-active .storage-console-log-item.type-debug { background: #24242
 body.night-mode-active .storage-modal-close,
 body.night-mode-active .storage-console-tab { background: #292929; color: #ddd; border-color: #3a3a3a; }
 .magic-moments-prompt { display:block; width:100%; min-height:62px; margin-top:6px; padding:8px; box-sizing:border-box; border:1px solid #e0e0e0; border-radius:8px; background:var(--panel-bg,#fff); color:inherit; font-family:inherit; font-size:12px; line-height:1.5; resize:vertical; overflow-wrap:anywhere; }
+.bilingual-global-settings { padding: 12px 15px; border-top: 1px solid #f0f0f0; color: inherit; }
+.bilingual-global-heading { font-size: 13px; font-weight: 600; }
+.bilingual-global-settings p { margin: 4px 0 10px; color: #888; font-size: 11px; line-height: 1.45; }
+.bilingual-scope-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.bilingual-scope-grid label { min-width: 0; display: flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.3; }
+.bilingual-scope-grid input { appearance: none; flex: 0 0 15px; width: 15px; height: 15px; margin: 0; border: 1px solid #b8b8b8; border-radius: 4px; background: #fff; position: relative; }
+.bilingual-scope-grid input:checked { border-color: var(--primary-color, #d47c9d); background: var(--primary-color, #d47c9d); }
+.bilingual-scope-grid input:checked::after { content: '✓'; position: absolute; inset: -2px 0 0; text-align: center; color: #fff; font-size: 12px; }
+.bilingual-scope-grid input:focus-visible { outline: 2px solid var(--primary-color, #d47c9d); outline-offset: 2px; }
+.bilingual-display-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 11px; }
+.bilingual-display-row select { min-width: 0; max-width: 50%; border: 0; background: transparent; color: inherit; font: inherit; }

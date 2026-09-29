@@ -80,8 +80,15 @@ const makeClassList = () => {
     };
 };
 const title = { classList: makeClassList(), setAttribute() {}, removeAttribute() {} };
-const header = { classList: makeClassList() };
 const groupButton = { style: {}, addEventListener(type, handler) { this[type] = handler; } };
+const panelCalls = [];
+const overlays = [];
+const makeElement = () => ({
+    children: [],
+    appendChild(child) { this.children.push(child); },
+    addEventListener(type, handler) { this[type] = handler; },
+    remove() { const index = overlays.indexOf(this); if (index >= 0) overlays.splice(index, 1); }
+});
 const screen = { classList: { contains: value => value === 'active' } };
 const interactionContext = {
     console, Date, Math, setTimeout, clearTimeout,
@@ -92,15 +99,17 @@ const interactionContext = {
     requestAnimationFrame(callback) { callback(); },
     messageArea: { querySelectorAll() { return []; } },
     addMessageBubble() {}, saveCharacter() {}, renderChatList() {},
+    showPanel(type) { panelCalls.push(type); },
     document: {
         addEventListener(type, handler) { if (type === 'click') clickHandlers.push(handler); },
+        createElement: makeElement,
+        body: { appendChild(overlay) { overlays.push(overlay); } },
         getElementById(id) {
             return {
                 'chat-room-title': title,
-                'chat-room-header-default': header,
-                'chat-poke-member-btn': groupButton,
+                'group-poke-expansion-btn': groupButton,
                 'chat-room-screen': screen
-            }[id] || null;
+            }[id] || overlays.find(overlay => overlay.id === id) || null;
         }
     }
 };
@@ -141,13 +150,22 @@ for (const [mode, avatarMode, target, expected] of [
 }
 const groupButtonChat = { id: 'group_trigger', pokeEnabled: true };
 interactionContext.window.PokeSystem.updateTriggerUI(groupButtonChat, 'group');
-assert.equal(groupButton.style.display, 'flex', '群聊开启拍一拍时显示成员入口');
-assert.equal(typeof groupButton.click, 'function', '群聊成员入口已连接选择弹层');
+assert.equal(groupButton.style.display, 'flex', '群聊开启拍一拍时显示拓展入口');
+assert.equal(typeof groupButton.click, 'function', '群聊拓展入口已连接选择弹层');
 assert.equal(title.classList.contains('poke-title-trigger'), false, '群名不作为拍一拍目标');
+interactionContext.window.PokeSystem.updateTriggerUI({ pokeEnabled: false }, 'group');
+assert.equal(groupButton.style.display, 'none', '群聊关闭拍一拍时隐藏拓展入口');
+interactionContext.window.PokeSystem.updateTriggerUI({ pokeEnabled: true }, 'private');
+assert.equal(groupButton.style.display, 'none', '私聊不显示群聊拓展入口');
 const interactionGroup = { id: 'group_trigger', history: [], pokeEnabled: true, members: [{ id: 'member_1', groupNickname: '群成员' }] };
 interactionContext.db.groups.push(interactionGroup);
 interactionContext.currentChatId = interactionGroup.id;
 interactionContext.currentChatType = 'group';
+interactionContext.window.PokeSystem.updateTriggerUI(interactionGroup, 'group');
+groupButton.click();
+assert.deepEqual(panelCalls, ['none'], '选择群成员前关闭聊天拓展面板');
+assert.equal(overlays[0]?.id, 'poke-member-picker', '群聊拓展入口打开成员选择弹层');
+assert.equal(overlays[0]?.children[0]?.children.length, 4, '选择弹层包含标题、自己、群成员和取消按钮');
 doubleClick('title');
 assert.equal(interactionGroup.history.length, 0, '双击群名不触发拍一拍');
 doubleClick('avatar', 'member_1');

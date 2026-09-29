@@ -264,6 +264,7 @@ async function generateJournal(start, end, includeFavorited = false, silent = fa
 
         let worldBooksContent = '';
         let summaryPrompt = '';
+        let journalAuthored = false;
         let favoritedJournalsPrompt = '';
 
         // 新增：读取已收藏的日记 (通用逻辑)
@@ -406,6 +407,7 @@ async function generateJournal(start, end, includeFavorited = false, silent = fa
 
             } else {
                 // 默认风格 (流水账) 或 自定义风格
+                journalAuthored = true;
                 // 基础 Prompt (第一人称)
                 summaryPrompt = `你是一个日记整理助手。请以角色 "${chat.remarkName || chat.name}" 的第一人称视角，总结以下聊天记录。请专注于重要的情绪、事件和细节。\n\n`;
                 
@@ -463,6 +465,7 @@ async function generateJournal(start, end, includeFavorited = false, silent = fa
         }
         apiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('journal', apiConfig) : apiConfig;
         
+        if (journalAuthored) summaryPrompt += BilingualContent.prompt(chat, 'journal', '角色第一人称日记的标题和正文');
         const rawContent = await requestJournalSummary(apiConfig, summaryPrompt);
         const journalData = parseJournalResponse(rawContent);
 
@@ -474,7 +477,8 @@ async function generateJournal(start, end, includeFavorited = false, silent = fa
             createdAt: Date.now(),
             chatId: targetChatId,
             chatType: targetChatType,
-            isFavorited: false 
+            isFavorited: false,
+            bilingualAuthored: journalAuthored
         };
 
         newJournal.range.startMessageId = rangeStartMessage ? rangeStartMessage.id : null;

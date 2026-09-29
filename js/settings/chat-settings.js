@@ -1871,6 +1871,8 @@ function loadSettingsToSidebar() {
         }
 
         document.getElementById('setting-bilingual-mode').checked = e.bilingualModeEnabled || false;
+        document.getElementById('setting-bilingual-language').value = e.bilingualLanguage || '';
+        BilingualContent.syncSettingsUi();
         document.getElementById('setting-bilingual-style').value = e.bilingualBubbleStyle || 'under';
         document.getElementById('setting-auto-expand-translation').checked = e.autoExpandTranslation === true;
 
@@ -2639,6 +2641,7 @@ async function saveSettingsFromSidebar() {
             e.currentBubbleCssPresetName = matched ? matched.name : '';
         }
         e.bilingualModeEnabled = document.getElementById('setting-bilingual-mode').checked;
+        e.bilingualLanguage = document.getElementById('setting-bilingual-language').value.trim();
         e.bilingualBubbleStyle = document.getElementById('setting-bilingual-style').value;
         e.autoExpandTranslation = document.getElementById('setting-auto-expand-translation').checked;
         
