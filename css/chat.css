@@ -399,22 +399,6 @@
     touch-action: manipulation;
 }
 
-#chat-room-header-default .chat-poke-member-btn {
-    font-size: 16px !important;
-    font-weight: 600;
-}
-
-#chat-room-header-default.poke-member-visible .title-container {
-    min-width: 0;
-}
-
-#chat-room-header-default.poke-member-visible .title {
-    max-width: calc(100vw - 195px);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 #chat-room-header-default .back-btn,
 #chat-room-header-default .action-btn {
     color: var(--func-icon-color) !important;
@@ -1918,6 +1902,13 @@
     cursor: pointer;
 }
 
+#group-poke-expansion-btn {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    font: inherit;
+}
+
 .expansion-item-icon {
     width: 50px;
     height: 50px;
@@ -3028,3 +3019,8 @@
 .voice-transcript > *:last-child {
     margin-bottom: 0;
 }
+.bilingual-content { display: inline; }
+.bilingual-reveal { display: inline-block; margin: 0 0 0 5px; padding: 0; border: 0; background: transparent; color: #888; font-size: min(.82em, 12px); line-height: inherit; cursor: pointer; vertical-align: baseline; }
+.bilingual-reveal:disabled { opacity: .65; cursor: wait; }
+.bilingual-translation { display: block; margin-top: 4px; color: #777; font-size: min(.9em, 14px); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bilingual-translation[hidden] { display: none; }

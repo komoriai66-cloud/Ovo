@@ -1567,6 +1567,9 @@
     padding: 10px 12px 8px;
 }
 
+.peek-memo-title-translation { padding: 5px 20px 0; font-size: 12px; color: #888; }
+.peek-memo-title-translation:empty { display: none; }
+
 .peek-clear-order-option {
     display: flex;
     align-items: flex-start;

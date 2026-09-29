@@ -905,7 +905,7 @@ function generateGroupSystemPrompt(group, opts) {
                 return member ? member.realName : null;
             }).filter(name => name);
             if (targetNames.length > 0) {
-                bilingualTargetText = `群成员（特别指定：${targetNames.join('、')}）`;
+                bilingualTargetText = `指定群成员（${targetNames.join('、')}）`;
             }
         }
         prompt += `✨双语模式特别指令✨：当${bilingualTargetText}的母语为中文以外的语言时，其消息回复**必须**严格遵循双语模式下的普通消息格式：\`[{成员真名}的消息：{外语原文}「中文翻译」]\`。例如: \`[Alice的消息：Of course, I'd love to.「当然，我很乐意。」]\`。中文翻译文本视为系统自翻译，不视为角色的原话。当角色想要说中文时，请使用标准格式：\`[{成员真名}的消息：{中文消息内容}]\`。这条规则的优先级非常高，请务必遵守。\n\n`;

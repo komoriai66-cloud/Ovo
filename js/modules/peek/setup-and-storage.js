@@ -420,6 +420,11 @@ function getPeekRealOrderIds(char) {
     return ids;
 }
 
+function peekBilingualText(text, originalHtml) {
+    const character = (db.characters || []).find(item => item.id === currentChatId);
+    return character && typeof BilingualContent !== 'undefined' ? BilingualContent.html(text, character, 'peek', 'peek', originalHtml == null ? {} : { originalHtml }) : originalHtml ?? peekEscapeHtml(text).replace(/\n/g, '<br>');
+}
+
 function hasPeekRealOrders(char) {
     return getPeekRealOrderIds(char).size > 0
         || (char.walletLedger?.transactions || []).some(item => item.source === 'shop');

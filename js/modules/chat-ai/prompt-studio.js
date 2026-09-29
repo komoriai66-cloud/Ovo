@@ -281,7 +281,7 @@
         const replyRule = character.replyCountEnabled
             ? `你可以一次生成多条短消息，每次回复必须限定在${minReply}-${maxReply}条以内，保持数量的随机性和多样性。`
             : '你可以一次生成3-8条短消息，保持数量的随机性和多样性。';
-        const bilingual = character.bilingualModeEnabled ? `双语模式：当角色母语为中文以外的语言时，消息必须使用 [${character.realName}的消息：{外语原文}「中文翻译」] 格式；语音消息也必须带中文翻译。` : '';
+        const bilingual = character.bilingualModeEnabled ? `双语模式：当角色母语为中文以外的语言时，优先使用${character.bilingualLanguage || '符合人设的外语'}，消息必须使用 [${character.realName}的消息：{外语原文}「中文翻译」] 格式；语音消息也必须带中文翻译。` : '';
         const autoFavorite = character.characterAutoFavoriteEnabled ? `【消息收藏功能】\n你可以主动收藏用户发送的重要消息。使用 [FAVORITE:消息ID:收藏寄语]，只收藏用户消息，不要过度收藏，且不在对话中提及收藏行为。` : '';
         return {
             '当前时间': currentTime,
