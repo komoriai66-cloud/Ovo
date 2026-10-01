@@ -117,7 +117,10 @@
                 else if (!event.shiftKey && document.activeElement === items.at(-1)) { items[0]?.focus(); event.preventDefault(); }
             }
         });
-        modal.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => view(node.dataset.view)));
+        modal.querySelectorAll('[data-view]').forEach(node => node.addEventListener('click', () => {
+            view(node.dataset.view);
+            if (node.dataset.view === 'old' && !busy) void scan();
+        }));
         $('scan').addEventListener('click', () => void scan());
         $('stop').addEventListener('click', () => {
             if (taskController) { taskController.abort(); status('正在取消检测或备份，不会执行数据清理。'); }
@@ -163,7 +166,7 @@
         $('modal').classList.add('visible'); $('close').focus();
         if (!policySelected.size) $('mode').value = db.statusStorageSettings?.mode || 'full';
         view(initial);
-        if (!report) await scan();
+        await scan();
     }
     function close() {
         if (busy) { status('操作正在执行。请先点击停止，当前会话提交结束后可关闭。'); return; }
@@ -178,8 +181,16 @@
         if (busy) return;
         setBusy(true,'scan'); taskController = new AbortController(); selected.clear(); invalidate(); const token = ++generation;
         try {
-            report = await window.StatusStorage.scan(count => status(`正在检测，已检查 ${count} 条状态消息…`),taskController.signal);
+            await refreshReport(taskController.signal, token);
+            status('检测完成。已读取数据库记录；占用为估算值，所有删除均需手动选择、预览和确认。');
+        } catch (error) { fail(error); } finally { setBusy(false); }
+    }
+    async function refreshReport(signal, token = generation) {
+            const next = await window.StatusStorage.scan(count => status(`正在读取数据库，已检查 ${count} 条状态消息…`),signal,{ persisted:true });
             if (token !== generation) return;
+            report = next;
+            const available = new Set(report.rows.map(row => row.key));
+            for (const key of selected) if (!available.has(key)) selected.delete(key);
             $('stats').replaceChildren();
             const labels = { snapshots: '消息快照', templates: '消息内模板', metadata: '必要关联信息', shared: '共享模板库', display: '展示历史', current: '当前状态' };
             for (const [key, label] of Object.entries(labels)) $('stats').append(element('span', '', `${label}：约 ${format(report.stats[key])}`));
@@ -193,9 +204,10 @@
             $('template').replaceChildren(new Option('全部模板','all'));
             for (const [template,item] of templates) $('template').append(new Option(`模板 ${item.index + 1} · ${item.count} 条 · ${format(template.length)}`,String(item.index)));
             const last = await dexieDB.globalSettings.get('_statusStorageLastRun');
-            $('last').textContent = last?.value ? `上次操作${last.value.finishedAt ? '' : '可能被中断'}：已完成 ${last.value.completed.length} 个会话。${last.value.pending?.length ? '未处理：' + last.value.pending.join('、') + '。' : ''}中断后不会自动继续。` : '';
-            render(); status('检测完成。占用为估算值；所有删除均需手动选择、预览和确认。');
-        } catch (error) { fail(error); } finally { setBusy(false); }
+            const value = last?.value;
+            const unverified = value?.completed?.filter(item => item.verified === false) || [];
+            $('last').textContent = value ? `上次操作${value.finishedAt ? '' : '可能被中断'}：已完成 ${value.completed.length - unverified.length} 个会话。${unverified.length ? '尚未完成提交后核验：' + unverified.map(item => item.name).join('、') + '。' : ''}${value.failed?.length ? '失败：' + value.failed.map(item => item.name + ' · ' + item.reason).join('；') + '。' : ''}${value.pending?.length ? '未处理：' + value.pending.join('、') + '。' : ''}中断后不会自动继续。` : '';
+            render();
     }
     function actionRows() {
         const kind = ['slim','shared'].includes($('action').value) ? 'message' : $('action').value;
@@ -386,19 +398,30 @@
             if (decision !== 'confirm') return;
             setBusy(true,'operation');
             const result = await window.StatusStorage.run(plan,(index,total,name) => status(`正在处理 ${index + 1}/${total}：${name}`));
-            showResult(result); selected.clear(); invalidate(); report = null;
-            $('list').replaceChildren(element('p','storage-chat-empty','操作已结束，请重新检测后再选择。'));
+            const completed = new Set(result.completed.map(item => JSON.stringify([item.type,item.chatId])));
+            for (const row of report.rows) if (completed.has(JSON.stringify([row.type,row.chatId]))) selected.delete(row.key);
+            invalidate();
+            try { await refreshReport(); }
+            catch (error) {
+                $('stats').replaceChildren(element('span','','重新读取数据库统计失败，请重新检测。'));
+                result.failed.push({ name:'重新检测', reason:error.message });
+                render();
+            }
+            showResult(result);
         } catch (error) { fail(error); } finally { setBusy(false); }
     }
     function showResult(result) {
         const lines = [`已完成 ${result.completed.length} 个会话。`];
-        result.completed.forEach(item => lines.push(`${item.name}：${item.count} 项${item.reduction === undefined ? '' : '，数据估算减少 ' + format(item.reduction)}`));
+        result.completed.forEach(item => lines.push(`${item.name}：${item.count} 项${item.reduction === undefined ? '' : '，数据库回读已核验，模板及所选状态数据估算减少 ' + format(item.reduction)}`));
         result.failed.forEach(item => lines.push(`失败：${item.name} · ${item.reason}`));
         if (result.pending.length) lines.push('尚未处理：' + result.pending.join('、'));
         if (result.conflicts?.length) lines.push('未恢复或无需恢复：\n' + result.conflicts.join('\n'));
-        lines.push('可重新检测核对。备份恢复不会自动执行。');
+        lines.push(result.action === 'restore' || result.failed.some(item => item.name === '重新检测')
+            ? '请重新检测核对。备份恢复不会自动执行。'
+            : '列表与占用已重新读取数据库；失败及尚未处理的候选保留。备份恢复不会自动执行。');
         $('result').textContent = lines.join('\n'); $('result').hidden = false;
-        status(result.failed.length || result.pending.length ? '操作未全部完成，请查看结果。' : '操作完成，请查看结果并重新检测核对。');
+        status(result.failed.length || result.pending.length ? '操作未全部完成，请查看失败及未处理项。'
+            : result.action === 'restore' ? '恢复完成，请重新检测核对。' : '操作完成，清理结果已通过数据库回读核验。');
     }
 
     const policySelected = new Set();

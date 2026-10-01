@@ -161,7 +161,11 @@ const selection = archive => new Set(archive.groups.map(group => JSON.stringify(
     const oldCopy = structuredClone(h.db.characters[0]);
     const stopped = await h.api.run(plan,() => h.api.stop());
     assert.equal(stopped.completed.length,1); assert.equal(stopped.pending.length,1);
-    await assert.rejects(h.api.persistChats(h.dexieDB.characters,[oldCopy]),/其他页面/);
+    await h.api.persistChats(h.dexieDB.characters,[oldCopy]);
+    assert.equal(oldCopy.history[0].statusSnapshot.replacePattern, undefined, '纯模板删除的旧副本安全同步，不写回模板');
+    const dirtyCopy = structuredClone(before[0]); dirtyCopy.history[0].content = '未保存的本地编辑';
+    await assert.rejects(h.api.persistChats(h.dexieDB.characters,[dirtyCopy]),/其他页面/);
+    assert.equal(dirtyCopy.history[0].content, '未保存的本地编辑');
     assert.equal((await h.dexieDB.characters.get('a')).history[0].statusSnapshot.replacePattern,undefined);
 }
 
@@ -174,6 +178,93 @@ const selection = archive => new Set(archive.groups.map(group => JSON.stringify(
     assert.equal(chat.history.at(-1).id,'during');
     await h.api.persistChats(h.dexieDB.characters,[chat]);
     assert.equal((await h.dexieDB.characters.get('a')).history.at(-1).id,'during');
+}
+
+// 提交期间快照关联信息发生变化，后续普通保存仍不能写回已清理的模板。
+{
+    const h = await harness(), chat = h.db.characters[0];
+    const row = (await h.api.scan()).rows.find(row => row.messageId === 'a-10');
+    h.dexieDB.beforeCommit = () => {
+        chat.history[0].statusSnapshot.oldRaw = '[HP:9]';
+        h.dexieDB.beforeCommit = null;
+    };
+    const result = await h.api.run(h.api.buildPlan([row], 'slim'));
+    assert.equal(result.completed.length, 1);
+    assert.equal(chat.history[0].statusSnapshot.oldRaw, '[HP:9]', '保留提交期间修改的关联信息');
+    await h.api.persistChats(h.dexieDB.characters, [chat]);
+    h.db.characters = [await h.dexieDB.characters.get('a')];
+    assert.equal(h.db.characters[0].history[0].statusSnapshot.replacePattern, undefined, '重载后所选模板不能恢复');
+    assert.equal((await h.api.scan()).rows.some(row => row.messageId === 'a-10'), false);
+}
+
+// 普通保存排在清理提交后执行，不能落入数据库提交与页面同步之间。
+{
+    const h = await harness(), chat = h.db.characters[0];
+    const row = (await h.api.scan()).rows.find(row => row.messageId === 'a-10');
+    let queuedSave;
+    h.dexieDB.beforeCommit = () => {
+        h.dexieDB.beforeCommit = null;
+        queuedSave = h.api.persistChats(h.dexieDB.characters, [chat]).then(() => true, error => error.message);
+    };
+    await h.api.run(h.api.buildPlan([row], 'slim'));
+    assert.equal(await queuedSave, true, '同页排队保存不误报其他页面冲突');
+    assert.equal((await h.dexieDB.characters.get('a')).history[0].statusSnapshot.replacePattern, undefined);
+}
+
+// 新保存策略不迁移旧消息；默认、角色覆盖、跟随全局与编辑保留行为。
+// 写入请求被忽略时，事务内核验拒绝假成功并回滚；提交后读失败也不能报告完成。
+{
+    const h = await harness(), chat = h.db.characters[0];
+    const rows = (await h.api.scan()).rows.filter(row => row.kind === 'message');
+    const plan = h.api.buildPlan(rows, 'slim');
+    const put = h.dexieDB.characters.put;
+    h.dexieDB.characters.put = async () => {};
+    let result = await h.api.run(plan);
+    assert.equal(result.completed.length, 0);
+    assert.match(result.failed[0].reason, /核验/);
+    assert.ok(chat.history.every(message => message.statusSnapshot.replacePattern));
+    h.dexieDB.characters.put = put;
+    h.dexieDB.beforeCommit = () => {
+        h.dexieDB.beforeCommit = null;
+        h.dexieDB.characters.beforeGet = () => {
+            h.dexieDB.characters.beforeGet = null;
+            throw new Error('模拟提交后磁盘读取失败');
+        };
+    };
+    result = await h.api.run(plan);
+    assert.equal(result.completed.length, 0);
+    assert.equal(result.failed[0].committed, true);
+    assert.match(result.failed[0].reason, /写入已提交/);
+    assert.ok(chat.history.every(message => message.statusSnapshot.replacePattern), '未核验成功时不假装页面已同步');
+    const report = await h.api.scan(null, null, { persisted:true });
+    assert.equal(report.rows.filter(row => row.kind === 'message').length, 0, '重新检测读数据库，不能把旧内存模板再列出来');
+    assert.ok(chat.history.every(message => !message.statusSnapshot.replacePattern), '纯模板删除可安全同步页面');
+}
+
+// 大快照清理后普通保存并重载，数据库中的原模板保持删除。
+{
+    const largeTemplate = '<style>' + 'x'.repeat(20 * 1024) + '</style><b>$1</b>';
+    const chat = character();
+    chat.history = Array.from({ length:7000 }, (_, index) => ({ id:'large-' + index,
+        role:'assistant', content:'[HP:10]', timestamp:index, statusSnapshot:{ regex, replacePattern:largeTemplate } }));
+    const h = await harness([chat]);
+    // 使用实际页面的估算函数，不把 130MB 快照拼成额外的整库 JSON 字符串。
+    const storageSource = fs.readFileSync('js/modules/storage.js', 'utf8');
+    vm.runInContext(storageSource.slice(storageSource.indexOf('function estimateLegacyStorageValue'),
+        storageSource.indexOf('async function analyzeLegacyChatStorage')), h.context);
+    let report = await h.api.scan(null, null, { persisted:true });
+    assert.ok(report.stats.templates > 130 * 1024 * 1024);
+    const result = await h.api.run(h.api.buildPlan(report.rows.filter(row => row.kind === 'message'), 'slim'));
+    assert.equal(result.completed.length, 1);
+    assert.equal(result.completed[0].verified, true);
+    assert.ok(result.completed[0].reduction > 130 * 1024 * 1024);
+    await h.api.persistChats(h.dexieDB.characters, [chat]);
+    h.db.characters = [await h.dexieDB.characters.get('a')];
+    report = await h.api.scan(null, null, { persisted:true });
+    assert.equal(report.stats.templates, 0);
+    assert.equal(report.rows.filter(row => row.kind === 'message').length, 0);
+    assert.equal(h.db.characters[0].history.length, 7000);
+    assert.equal(h.db.characters[0].statusPanel.currentStatusHtml, currentState.html);
 }
 
 // 新保存策略不迁移旧消息；默认、角色覆盖、跟随全局与编辑保留行为。
@@ -269,6 +360,8 @@ const selection = archive => new Set(archive.groups.map(group => JSON.stringify(
     await wait(() => !get('result').hidden && get('result').textContent.includes('已完成 1 个会话'));
     assert.ok(h.db.characters[0].history.every(message => !message.statusSnapshot.replacePattern));
     assert.ok(h.db.characters[1].history.every(message => message.statusSnapshot.replacePattern));
+    assert.match(get('stats').textContent, /消息内模板：约/);
+    assert.match(get('result').textContent, /数据库回读已核验/);
     w.document.querySelector('[data-view="restore"]').click();
     const file = new File([await downloaded.arrayBuffer()],'恢复.json',{ type:'application/json' });
     Object.defineProperty(get('file'),'files',{ configurable:true,value:[file] }); get('file').dispatchEvent(new w.Event('change'));
@@ -288,4 +381,41 @@ const selection = archive => new Set(archive.groups.map(group => JSON.stringify(
     assert.ok(w.document.getElementById('setting-status-history-limit'), '发送给 AI 的条数配置保留');
     dom.window.close();
 }
-console.log('Status storage tests passed: selective cleanup, shared references, backup/restore, rollback, concurrency, reply integration, and user interaction.');
+// 部分失败仍列出失败会话，统计和重新打开后的列表来自数据库。
+{
+    const h = await harness([character('a'), character('b')]);
+    const markup = fs.readFileSync('src/html/screens/magic-storage-peek.html', 'utf8');
+    const dom = new JSDOM('<!doctype html><body>' + markup + '</body>', { runScripts:'outside-only', url:'https://local.test/' });
+    const w = dom.window;
+    Object.assign(w, { db:h.db, dexieDB:h.dexieDB, structuredClone });
+    w.HTMLElement.prototype.scrollIntoView = function () {};
+    w.showAppConfirmDialog = async () => 'confirm';
+    w.eval(coreSource); w.eval(uiSource); w.setupStatusStorageScreen();
+    const get = id => w.document.getElementById('status-storage-' + id);
+    const wait = async predicate => { for (let attempt=0; attempt<100; attempt++) {
+        if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5));
+    } throw new Error('失败结果 UI 操作没有完成'); };
+    w.document.getElementById('storage-status-open').click();
+    await wait(() => get('status').textContent.includes('检测完成'));
+    get('select-all').click(); get('preview-open').click();
+    get('backup').value = 'none'; get('backup').dispatchEvent(new w.Event('change')); get('saved').checked = true;
+    h.dexieDB.characters.failId = 'b';
+    get('execute').click();
+    await wait(() => !get('result').hidden && get('stop').hidden);
+    assert.match(get('result').textContent, /已完成 1 个会话/);
+    assert.match(get('result').textContent, /失败：角色乙/);
+    assert.match(get('list').textContent, /角色乙/);
+    assert.doesNotMatch(get('list').textContent, /角色甲/);
+    assert.match(get('count').textContent, /已选 3 项/);
+    assert.match(get('last').textContent, /失败：角色乙/);
+    // 故意让页面重持有旧副本；重新打开必须从数据库检测，并安全同步纯模板差异。
+    h.db.characters[0] = character('a');
+    get('close').click(); w.document.getElementById('storage-status-open').click();
+    await wait(() => get('status').textContent.includes('检测完成') && get('stop').hidden);
+    assert.doesNotMatch(get('list').textContent, /角色甲/);
+    assert.match(get('list').textContent, /角色乙/);
+    assert.ok(h.db.characters[0].history.every(message => !message.statusSnapshot.replacePattern));
+    dom.window.close();
+}
+
+console.log('Status storage tests passed: 130MB cleanup/reload, verified commits, rollback, queued saves, stale copies, selective cleanup, backup/restore, and failure UI.');

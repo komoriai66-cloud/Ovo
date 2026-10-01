@@ -22,6 +22,85 @@
     let running = false;
     let stopRequested = false;
     let activeChatKey = null;
+    let writeTail = Promise.resolve();
+
+    // 队列覆盖事务提交、回读核验和页面同步，普通保存不能插入提交后的空档。
+    function queueWrite(task) {
+        const next = writeTail.then(task);
+        writeTail = next.catch(() => {});
+        return next;
+    }
+
+    function messageIndex(history) {
+        const index = new Map();
+        for (const message of history || []) if (message?.id) {
+            index.set(message.id, index.has(message.id) ? null : message);
+        }
+        return index;
+    }
+
+    // 先移除待清理模板再交给 IndexedDB 克隆，不额外深拷贝整份大快照。
+    function statusDraft(chat, rows, stripTemplates = false) {
+        const ids = new Set(rows.filter(row => row.kind === 'message').map(row => row.messageId));
+        const draft = { ...chat, history: (chat.history || []).map(message => {
+            if (!ids.has(message?.id)) return message;
+            const snapshot = { ...message.statusSnapshot };
+            if (stripTemplates) { delete snapshot.replacePattern; delete snapshot.templateRef; }
+            return { ...message, statusSnapshot: snapshot };
+        }) };
+        if (chat.statusPanel) {
+            draft.statusPanel = { ...chat.statusPanel };
+            if (Array.isArray(chat.statusPanel.history)) draft.statusPanel.history = [...chat.statusPanel.history];
+            if (chat.statusPanel.snapshotTemplates) draft.statusPanel.snapshotTemplates = { ...chat.statusPanel.snapshotTemplates };
+        }
+        return draft;
+    }
+
+    function reductionOf(changes, beforePanel, afterPanel) {
+        let reduction = 0;
+        for (const change of changes) {
+            if (change.kind === 'message') reduction += bytes(change.before) - bytes(change.after);
+            if (change.kind === 'history') reduction += bytes(change.removed);
+            if (change.kind === 'current') reduction += bytes(change.before) - bytes(change.after) + bytes(change.removed);
+        }
+        reduction += bytes(beforePanel?.snapshotTemplates || {}) - bytes(afterPanel?.snapshotTemplates || {});
+        return Math.max(0, reduction);
+    }
+
+    function equalExcept(a, b, ignored) {
+        if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+        const keys = Object.keys(a).filter(key => !ignored.includes(key));
+        return keys.length === Object.keys(b).filter(key => !ignored.includes(key)).length
+            && keys.every(key => own(b, key) && equal(a[key], b[key]));
+    }
+
+    // 只自动同步纯模板删除：正文、顺序、关联信息、配置有任何其他差异仍拒绝覆盖。
+    function templateCleanupPatch(record, disk) {
+        if (revision(disk) <= revision(record)
+            || !equalExcept(record, disk, ['history', '_statusStorageRevision'])
+            || !Array.isArray(record.history) || !Array.isArray(disk.history)
+            || record.history.length !== disk.history.length) return null;
+        const patches = [];
+        for (let index = 0; index < record.history.length; index++) {
+            const before = record.history[index], after = disk.history[index];
+            if (!equalExcept(before, after, ['statusSnapshot'])) return null;
+            if (equal(before.statusSnapshot, after.statusSnapshot)) continue;
+            if (!before.statusSnapshot || !after.statusSnapshot
+                || own(after.statusSnapshot, 'replacePattern') || own(after.statusSnapshot, 'templateRef')
+                || !equalExcept(before.statusSnapshot, after.statusSnapshot, ['replacePattern', 'templateRef'])) return null;
+            patches.push({ index, snapshot: { ...after.statusSnapshot } });
+        }
+        return patches.length ? patches : null;
+    }
+
+    function applyTemplatePatch(record, disk, patches) {
+        for (const patch of patches) {
+            const snapshot = { ...record.history[patch.index].statusSnapshot };
+            delete snapshot.replacePattern; delete snapshot.templateRef;
+            record.history[patch.index].statusSnapshot = snapshot;
+        }
+        record._statusStorageRevision = revision(disk);
+    }
 
     function policy(chat) {
         const local = chat.statusPanel?.snapshotStorageMode;
@@ -77,14 +156,23 @@
         return refs;
     }
 
-    async function scan(onProgress, signal) {
+    async function scan(onProgress, signal, { persisted = false } = {}) {
+        if (persisted) await writeTail;
         const rows = [];
         const issues = [];
         const stats = { snapshots: 0, templates: 0, metadata: 0, display: 0, current: 0, shared: 0 };
         let count = 0;
         for (const [chats, type] of [[db.characters || [], 'private'], [db.groups || [], 'group']]) {
-            for (const chat of chats) {
-                const base = { chatId: chat.id, type, name: name(chat) };
+            for (const local of chats) {
+                if (signal?.aborted) throw new Error('检测已取消');
+                const chat = persisted ? await tableFor(type).get(local.id) : local;
+                if (!chat) { issues.push(`${name(local)}：数据库中没有此会话，未列为清理项`); continue; }
+                if (persisted && revision(local) !== revision(chat)) {
+                    const patches = templateCleanupPatch(local, chat);
+                    if (patches) applyTemplatePatch(local, chat, patches);
+                    else issues.push(`${name(local)}：页面与数据库版本不一致，已按数据库统计；请保留未保存内容后重新载入再处理`);
+                }
+                const base = { chatId: chat.id, type, name: name(chat), rev: revision(chat) };
                 const history = Array.isArray(chat.history) ? chat.history : [];
                 const ids = new Map();
                 for (const message of history) if (message?.id) ids.set(message.id, (ids.get(message.id) || 0) + 1);
@@ -160,12 +248,13 @@
         const expectedKind = ['slim', 'shared'].includes(action) ? 'message' : action;
         if (rows.some(row => row.kind !== expectedKind)) throw new Error('选择项与操作不匹配');
         const groups = new Map();
-        let before = 0, after = 0;
+        let reduction = 0;
         for (const row of rows) {
             const key = JSON.stringify([row.type, row.chatId]);
             if (!groups.has(key)) {
                 const chat = findChat(row.type, row.chatId);
                 if (!chat) throw new Error('会话不存在，请重新检测');
+                if (row.rev !== undefined && row.rev !== revision(chat)) throw new Error(`${row.name} 的页面版本已过期，请保留未保存内容后重新载入再检测`);
                 groups.set(key, { type: row.type, chatId: row.chatId, name: row.name, rev: revision(chat), rows: [],
                     panelBefore: clone({ history: chat.statusPanel?.history || [], currentStatusRaw: chat.statusPanel?.currentStatusRaw || '',
                         currentStatusHtml: chat.statusPanel?.currentStatusHtml || '', snapshotTemplates: chat.statusPanel?.snapshotTemplates || {} }) });
@@ -179,21 +268,20 @@
                 if (row.kind === 'message') draft.history.push({ id: row.messageId, content: row.source.content,
                     timestamp: row.timestamp, statusSnapshot: { ...row.source.snapshot } });
             }
-            before += bytes(draft);
             applyRows(draft, group.rows, action, backup);
-            after += bytes(draft);
+            reduction += reductionOf(backup, group.panelBefore, draft.statusPanel);
         }
         return { id: 'status_' + Date.now() + '_' + Math.random().toString(36).slice(2), createdAt: Date.now(),
-            action, groups: [...groups.values()], count: rows.length, reduction: Math.max(0, before - after) };
+            action, groups: [...groups.values()], count: rows.length, reduction };
     }
 
     function assertRows(chat, group) {
         if (revision(chat) !== group.rev) throw new Error('整理后数据已变化，请重新预览');
+        const messages = messageIndex(chat.history);
         for (const row of group.rows) {
             if (row.kind === 'message') {
-                const matches = (chat.history || []).filter(message => message?.id === row.messageId);
-                const message = matches[0];
-                if (matches.length !== 1 || message.content !== row.source.content || message.timestamp !== row.source.timestamp
+                const message = messages.get(row.messageId);
+                if (!message || message.content !== row.source.content || message.timestamp !== row.source.timestamp
                     || !equal(message.statusSnapshot, row.source.snapshot)) throw new Error('所选消息已变化，请重新检测和预览');
                 if (templateOf(chat, message.statusSnapshot) !== row.template) throw new Error('模板已变化，请重新预览');
             } else if (row.kind === 'history') {
@@ -212,9 +300,10 @@
     function applyRows(chat, rows, action, changes) {
         const panel = chat.statusPanel || (action === 'shared' ? (chat.statusPanel = {}) : {});
         const historyIndices = new Set();
+        const messages = messageIndex(chat.history);
         for (const row of rows) {
             if (row.kind === 'message') {
-                const message = chat.history.find(item => item.id === row.messageId);
+                const message = messages.get(row.messageId);
                 const before = { ...message.statusSnapshot };
                 const template = templateOf(chat, before);
                 const after = { ...before };
@@ -246,11 +335,16 @@
 
     function publishChanges(source, draft, changes) {
         // 提交后只更新所选字段，不用整份旧历史覆盖提交期间新增的消息。
+        const messages = messageIndex(source.history);
         for (const change of changes) {
             if (change.kind === 'message') {
-                const message = (source.history || []).find(item => item.id === change.messageId);
-                if (!message || !equal(message.statusSnapshot, change.before)) continue;
-                const after = { ...change.after };
+                const message = messages.get(change.messageId);
+                if (!message) continue;
+                const slim = !own(change.after, 'replacePattern') && !own(change.after, 'templateRef');
+                if (!slim && !equal(message.statusSnapshot, change.before)) throw new Error('模板在提交期间发生变化，已保留页面内容，请重新载入核对');
+                // 精简只删除模板字段，保留提交期间更新的正则和编辑关联信息。
+                const after = slim ? { ...message.statusSnapshot } : { ...change.after };
+                if (slim) { delete after.replacePattern; delete after.templateRef; }
                 if (own(after, 'templateRef')) {
                     source.statusPanel ||= {};
                     after.templateRef = intern(source.statusPanel, change.template);
@@ -275,13 +369,48 @@
 
     // 所有普通角色写入也检查整理修订号，防止其他标签页旧副本写回已删除字段。
     async function persistChats(table, records) {
-        return dexieDB.transaction('rw', table, async () => {
-            for (const record of records) {
-                const disk = await table.get(record.id);
-                if (disk && revision(disk) !== revision(record)) throw new Error('该会话在其他页面完成了状态栏整理。请先导出当前未保存内容，再重新载入页面，避免覆盖整理结果。');
-            }
-            await table.bulkPut(records);
-        });
+        const write = async () => {
+            const synced = [];
+            await dexieDB.transaction('rw', table, async () => {
+                const prepared = [];
+                for (const record of records) {
+                    const disk = await table.get(record.id);
+                    if (disk && revision(disk) !== revision(record)) {
+                        const patches = templateCleanupPatch(record, disk);
+                        if (!patches) throw new Error(`${name(record)}：该会话在其他页面完成了状态栏整理。请先导出当前未保存内容，再重新载入页面，避免覆盖整理结果。`);
+                        const updated = { ...record, history: record.history.map(message => ({ ...message })), _statusStorageRevision: revision(disk) };
+                        applyTemplatePatch(updated, disk, patches);
+                        prepared.push(updated); synced.push({ record, disk, patches });
+                    } else prepared.push(record);
+                }
+                await table.bulkPut(prepared);
+            });
+            for (const { record, disk, patches } of synced) applyTemplatePatch(record, disk, patches);
+        };
+        // 钱包等调用可能已在 Dexie 事务中；此时数据库自身排队，不能等待持锁事务后的队列。
+        if (typeof Dexie !== 'undefined' && Dexie.currentTransaction) return write();
+        return queueWrite(write);
+    }
+
+    function verifyChanges(saved, draft, changes) {
+        if (!saved || revision(saved) !== revision(draft)) throw new Error('数据库回读版本核验失败，未确认清理成功');
+        const messages = messageIndex(saved.history);
+        for (const change of changes) {
+            if (change.kind === 'message') {
+                const message = messages.get(change.messageId);
+                if (!message || message.content !== change.content || message.timestamp !== change.timestamp
+                    || !equal(message.statusSnapshot, change.after)
+                    || (own(change.after, 'templateRef') && templateOf(saved, message.statusSnapshot) !== change.template)) {
+                    throw new Error('数据库回读发现所选消息模板未正确整理，未确认清理成功');
+                }
+            } else if (change.kind === 'history' || change.kind === 'current') {
+                if (!equal(saved.statusPanel?.history, draft.statusPanel?.history)
+                    || (saved.statusPanel?.currentStatusRaw || '') !== (draft.statusPanel?.currentStatusRaw || '')
+                    || (saved.statusPanel?.currentStatusHtml || '') !== (draft.statusPanel?.currentStatusHtml || '')) {
+                    throw new Error('数据库回读状态历史核验失败，未确认清理成功');
+                }
+            } else if (own(saved.statusPanel?.snapshotTemplates, change.templateId)) throw new Error('数据库回读共享模板核验失败，未确认清理成功');
+        }
     }
 
     async function persistSetting(value) {
@@ -327,37 +456,49 @@
                 if (stopRequested) { result.stopped = true; result.pending = plan.groups.slice(index).map(item => item.name); break; }
                 onProgress?.(index, plan.groups.length, group.name);
                 activeChatKey = JSON.stringify([group.type, group.chatId]);
+                let committed = false;
                 try {
-                    if (busy(group.type, group.chatId)) throw new Error('会话正在生成回复，未处理');
-                    const table = tableFor(group.type);
-                    const source = findChat(group.type, group.chatId);
-                    if (!source) throw new Error('会话不存在');
-                    assertRows(source, group);
-                    const draft = clone(source);
-                    const sourceSerialized = JSON.stringify(source);
-                    const diskBefore = await table.get(group.chatId);
-                    if (!diskBefore) throw new Error('数据库中找不到会话，未处理');
-                    if (diskBefore && revision(diskBefore) !== revision(source)) throw new Error('其他页面数据已变化，请重新载入');
-                    const changes = [];
-                    const sizeBefore = bytes(draft);
-                    applyRows(draft, group.rows, plan.action, changes);
-                    draft._statusStorageRevision = revision(source) + 1;
-                    const item = { name: group.name, chatId: group.chatId, count: group.rows.length, reduction: Math.max(0, sizeBefore - bytes(draft)) };
-                    const nextResult = { ...result, completed: [...result.completed, item], pending: plan.groups.slice(index + 1).map(entry => entry.name) };
-                    await dexieDB.transaction('rw', table, dexieDB.globalSettings, async () => {
-                        const disk = await table.get(group.chatId);
-                        if (!equal(disk, diskBefore) || JSON.stringify(source) !== sourceSerialized || busy(group.type, group.chatId)) {
-                            throw new Error('会话在执行前发生变化，未处理，请重新预览');
-                        }
-                        await table.put(draft);
-                        await dexieDB.globalSettings.put({ key: '_statusStorageLastRun', value: nextResult });
+                    await queueWrite(async () => {
+                        if (busy(group.type, group.chatId)) throw new Error('会话正在生成回复，未处理');
+                        const table = tableFor(group.type);
+                        const source = findChat(group.type, group.chatId);
+                        if (!source) throw new Error('会话不存在');
+                        assertRows(source, group);
+                        const baseline = clone(statusDraft(source, group.rows, true));
+                        const diskBefore = await table.get(group.chatId);
+                        if (!diskBefore) throw new Error('数据库中找不到会话，未处理');
+                        if (revision(diskBefore) !== revision(source)) throw new Error('其他页面数据已变化，请重新载入');
+                        const draft = statusDraft(source, group.rows);
+                        const changes = [];
+                        applyRows(draft, group.rows, plan.action, changes);
+                        draft._statusStorageRevision = revision(source) + 1;
+                        const item = { name: group.name, type: group.type, chatId: group.chatId, count: group.rows.length,
+                            reduction: reductionOf(changes, source.statusPanel, draft.statusPanel), verified: false };
+                        const nextResult = { ...result, completed: [...result.completed, item], pending: plan.groups.slice(index + 1).map(entry => entry.name) };
+                        await dexieDB.transaction('rw', table, dexieDB.globalSettings, async () => {
+                            const disk = await table.get(group.chatId);
+                            assertRows(source, group);
+                            if (!equal(disk, diskBefore) || !equal(statusDraft(source, group.rows, true), baseline)
+                                || findChat(group.type, group.chatId) !== source || busy(group.type, group.chatId)) {
+                                throw new Error('会话在执行前发生变化，未处理，请重新预览');
+                            }
+                            await table.put(draft);
+                            verifyChanges(await table.get(group.chatId), draft, changes);
+                            await dexieDB.globalSettings.put({ key: '_statusStorageLastRun', value: nextResult });
+                        });
+                        committed = true;
+                        // 事务结束后再读取一次；只有提交后的记录通过核验才同步页面并计入完成。
+                        verifyChanges(await table.get(group.chatId), draft, changes);
+                        if (findChat(group.type, group.chatId) !== source) throw new Error('会话在提交期间重新载入，清理已提交，请重新检测核对');
+                        publishChanges(source, draft, changes);
+                        item.verified = true;
+                        result.completed.push(item);
+                        result.pending = nextResult.pending;
+                        window.ChatTokenStats?.changed(group.chatId, group.type);
                     });
-                    publishChanges(source, draft, changes);
-                    result.completed.push(item);
-                    result.pending = nextResult.pending;
-                    window.ChatTokenStats?.changed(group.chatId, group.type);
                 } catch (error) {
-                    result.failed.push({ name: group.name, reason: error.message });
+                    result.failed.push({ name: group.name, type: group.type, chatId: group.chatId, committed,
+                        reason: (committed ? '写入已提交，但未完成核验或页面同步：' : '') + error.message });
                     result.pending = plan.groups.slice(index + 1).map(item => item.name);
                     break;
                 } finally { activeChatKey = null; }
