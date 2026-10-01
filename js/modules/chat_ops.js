@@ -15,6 +15,10 @@ function handleMessageLongPress(messageWrapper, x, y) {
     if (!message) return;
 
     let menuItems = [];
+    if (message.apiUsage) menuItems.push({ label: 'API 调用详情', action: () => {
+        const usage = message.apiUsage;
+        customAlert(`API：${usage.name}\n模型：${usage.model}\n来源：${usage.source}\n${usage.fallback ? '本次使用备用配置' : '本次使用选定配置'}${usage.elapsedMs != null ? `\n耗时：${(usage.elapsedMs / 1000).toFixed(1)} 秒` : ''}`, 'API 调用详情');
+    } });
 
     if (message.isNodeBoundary) {
         menuItems.push({
@@ -591,8 +595,8 @@ async function saveMessageEdit() {
                         });
                         const storedLimit = chat.statusPanel.historyRetentionLimit;
                         const retentionLimit = Number.isSafeInteger(storedLimit) && storedLimit >= 0 ? storedLimit : 20;
-                        if (retentionLimit > 0 && chat.statusPanel.history.length > retentionLimit) {
-                            chat.statusPanel.history = chat.statusPanel.history.slice(0, retentionLimit);
+                        if (retentionLimit > 0 && chat.statusPanel.history.length === retentionLimit + 1) {
+                            showToast('状态栏历史已超过参考数量，可在存储分析中手动整理');
                         }
                     }
 
@@ -600,7 +604,8 @@ async function saveMessageEdit() {
                     chat.statusPanel.currentStatusHtml = html;
                     
                     chat.history[messageIndex].isStatusUpdate = true;
-                    chat.history[messageIndex].statusSnapshot = {
+                    chat.history[messageIndex].statusSnapshot = window.StatusStorage
+                        ? window.StatusStorage.makeSnapshot(chat, pattern, rawStatus, chat.history[messageIndex].statusSnapshot) : {
                         regex: pattern,
                         replacePattern: chat.statusPanel.replacePattern,
                         oldRaw: rawStatus

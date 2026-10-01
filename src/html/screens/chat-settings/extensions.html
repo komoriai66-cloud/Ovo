@@ -241,20 +241,24 @@
                                         </div>
                                     </div>
                                     <div class="kkt-item">
-                                        <div class="kkt-item-label">本地保留状态栏条数</div>
+                                        <div class="kkt-item-label">状态历史数量提醒阈值</div>
                                         <div class="kkt-item-control">
                                             <input type="text" inputmode="numeric" autocomplete="off" id="setting-status-retention-limit" value="20"
                                                 style="width:68px; text-align:right; border:none; background:rgba(0,0,0,0.05); border-radius:4px; padding:4px 6px;">
                                         </div>
                                     </div>
                                     <div class="kkt-item">
-                                        <div class="kkt-item-label">不限本地保留条数</div>
+                                        <div class="kkt-item-label">关闭状态历史数量提醒</div>
                                         <div class="kkt-item-control">
                                             <label class="kkt-switch">
                                                 <input type="checkbox" id="setting-status-retention-unlimited">
                                                 <span class="kkt-slider"></span>
                                             </label>
                                         </div>
+                                    </div>
+                                    <div class="kkt-item" style="flex-direction:column; align-items:stretch; gap:6px;">
+                                        <p class="kkt-item-hint" style="margin:0; font-size:11px;">数量仅提醒，不自动删除历史。模板整理、新消息保存与恢复均由你手动选择。</p>
+                                        <button type="button" id="setting-status-storage-open" class="btn btn-small btn-secondary" style="font-size:12px;">模板保存与手动整理</button>
                                     </div>
                                 </div>
                             </div>

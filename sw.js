@@ -14,7 +14,8 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(OVO_CACHE_NAME).then(cache => {
             const shellEntry = OVO_SW_MANIFEST.assets.includes('index.html') ? 'index.html' : './';
-            const remainingAssets = OVO_SW_MANIFEST.assets.filter(asset => asset !== shellEntry);
+            // Large tokenizer dictionaries are fetched/cached on first use, not during app installation.
+            const remainingAssets = OVO_SW_MANIFEST.assets.filter(asset => asset !== shellEntry && !asset.startsWith('js/vendor/tokenizer/'));
             return cache.add(new Request(shellEntry, { cache: 'reload' })).then(() => Promise.allSettled(
                 remainingAssets.map(asset => cache.add(new Request(asset, { cache: 'reload' })))
             ));

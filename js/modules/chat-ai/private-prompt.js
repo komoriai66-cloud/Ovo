@@ -719,7 +719,7 @@ function generatePrivateSystemPrompt(character, opts) {
         prompt += `当前正在使用：${currentThemeName}\n\n`;
         if (character.themeJustChangedByUser && character.themeJustChangedByUser.trim()) {
             prompt += `用户刚刚将对话主题更换为了：${character.themeJustChangedByUser.trim()}。请根据人设自然地对此做出反应（如开心、好奇、调侃等）。\n\n`;
-            character.themeJustChangedByUser = '';
+            if (!opts.preview) character.themeJustChangedByUser = '';
         }
         prompt += `你可以在合适时机（例如氛围、心情、场景变化时）主动提议或请求更换主题。提及或填写主题名时直接写主题名，不要加「」、书名号等括号。若想更换，请在回复中单独一行使用格式：[更换主题：主题名]（主题名只写名称，不要加括号）。\n`;
         prompt += `</chat_themes>\n\n`;

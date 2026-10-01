@@ -215,8 +215,13 @@ const performFullSave = async () => {
     }
 
     try {
-        await dexieDB.characters.bulkPut(db.characters);
-        await dexieDB.groups.bulkPut(db.groups);
+        if (window.StatusStorage) {
+            await window.StatusStorage.persistChats(dexieDB.characters, db.characters);
+            await window.StatusStorage.persistChats(dexieDB.groups, db.groups);
+        } else {
+            await dexieDB.characters.bulkPut(db.characters);
+            await dexieDB.groups.bulkPut(db.groups);
+        }
         await dexieDB.worldBooks.bulkPut(db.worldBooks);
         await dexieDB.myStickers.bulkPut(db.myStickers);
         if (dexieDB.archives) await dexieDB.archives.bulkPut(db.archives || []);
@@ -224,11 +229,13 @@ const performFullSave = async () => {
         const allSettingKeys = [...globalSettingKeys, 'worldBookCategoryOrder'];
         const settingsPromises = allSettingKeys.map(key => {
             if (db[key] !== undefined) {
+                if (key === 'statusStorageSettings' && window.StatusStorage) return window.StatusStorage.persistSetting(db[key]);
                 return dexieDB.globalSettings.put({ key: key, value: db[key] });
             }
             return null;
         }).filter(p => p);
         await Promise.all(settingsPromises);
+        window.ChatTokenStats?.changed(null);
     } catch (e) {
         console.error("saveData failed:", e);
         if (typeof showToast === 'function') {
@@ -283,8 +290,10 @@ const saveSingleChatRecord = async (table, collection, id, queueMap, label) => {
                 state.requested = false;
                 const record = collection.find(item => item.id === id);
                 if (!record) return;
-                await table.put(record);
+                if (window.StatusStorage) await window.StatusStorage.persistChats(table, [record]);
+                else await table.put(record);
             } while (state.requested);
+            window.ChatTokenStats?.changed(id, table === dexieDB.groups ? 'group' : 'private');
             return true;
         } catch (error) {
             console.error(`${label} failed:`, error);
@@ -320,8 +329,10 @@ const saveGlobalSettings = async (keys) => {
             : [...globalSettingKeys, 'worldBookCategoryOrder'];
         const promises = allSettingKeys
             .filter(key => db[key] !== undefined)
-            .map(key => dexieDB.globalSettings.put({ key, value: db[key] }));
+            .map(key => key === 'statusStorageSettings' && window.StatusStorage
+                ? window.StatusStorage.persistSetting(db[key]) : dexieDB.globalSettings.put({ key, value: db[key] }));
         await Promise.all(promises);
+        window.ChatTokenStats?.changed(null);
         return true;
     } catch (e) {
         console.error("saveGlobalSettings failed:", e);

@@ -221,6 +221,9 @@
                         <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">节点状态</span><select id="api-node-enabled" required><option value="">请选择</option><option value="enabled">启用</option><option value="paused">暂停</option></select></label>
                         <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">流式输出</span><select id="api-node-stream" required><option value="">请选择</option><option value="inherit">沿用主 API 开关</option><option value="enabled">启用</option><option value="disabled">关闭</option></select></label>
                         <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">图片发送</span><select id="api-node-image-mode"><option value="">未选择</option><option value="openai_data_url">OpenAI Data URL</option><option value="anthropic_base64">Anthropic Base64</option><option value="gemini_inline">Gemini Inline Data</option><option value="url">仅 URL</option><option value="description">仅图片描述</option><option value="reject">不发送图片</option></select></label>
+                        <input type="hidden" id="api-node-owner-id">
+                        <label class="kkt-item api-node-edit-row"><span class="kkt-item-label">角色可用范围</span><select id="api-node-role-visibility"><option value="shared">共享使用</option><option value="private">仅所属角色</option></select></label>
+                        <div class="api-node-feature-group"><span>能力声明<br>不选表示未知</span><label><input type="checkbox" name="api-node-capability" value="text">文本</label><label><input type="checkbox" name="api-node-capability" value="vision">图片理解</label><label><input type="checkbox" name="api-node-capability" value="tools">工具／联网</label></div>
                     </section>
 
                     <section class="kkt-group api-section-card api-node-edit-group api-generation-card" aria-labelledby="api-node-generation-heading">

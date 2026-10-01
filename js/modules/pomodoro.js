@@ -291,7 +291,7 @@ function setupPomodoroApp() {
         showPomodoroTypingIndicator(messageP);
 
         try {
-            const pomodoroApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('pomodoro', db.apiSettings) : db.apiSettings;
+            const pomodoroApiConfig = typeof getApiConfigForFeature === 'function' ? getApiConfigForFeature('pomodoro', db.apiSettings, character) : db.apiSettings;
             let { url, key, model } = pomodoroApiConfig;
             if (typeof isApiConfigReady === 'function' ? !isApiConfigReady(pomodoroApiConfig) : (!url || !key || !model)) {
                 messageP.textContent = 'API未配置，无法获取回应。';

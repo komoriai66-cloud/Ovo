@@ -1232,9 +1232,14 @@ function applyApiNodeRouteParameterMode(config, route) {
     return config;
 }
 
-function getApiConfigForFeature(feature, legacyConfig) {
+function getApiConfigForFeature(feature, legacyConfig, ownerContext) {
+    if (ownerContext && typeof window !== 'undefined' && window.RoleApiBindings) {
+        const bound = window.RoleApiBindings.resolve(feature, legacyConfig, ownerContext);
+        if (bound) return bound;
+    }
+    if (feature === 'followUp') feature = 'background';
     const nodes = (typeof db !== 'undefined' && Array.isArray(db.apiNodes))
-        ? db.apiNodes.filter(node => node && node.enabled !== false && Array.isArray(node.features) && node.features.includes(feature))
+        ? db.apiNodes.filter(node => node && !node.ownerCharacterId && node.enabled !== false && Array.isArray(node.features) && node.features.includes(feature))
         : [];
     if (nodes.length === 1) return applyApiNodeRouteParameterMode(apiNodeToConfig(nodes[0]), db.apiNodeRoutes?.[feature]);
     if (nodes.length > 1) {
@@ -1249,12 +1254,15 @@ function getApiConfigForFeature(feature, legacyConfig) {
     return legacyConfig || null;
 }
 
-function getApiFallbackConfigsForFeature(feature, currentNodeId) {
+function getApiFallbackConfigsForFeature(feature, currentNodeId, currentConfig) {
+    if (currentConfig?._roleBinding && typeof window !== 'undefined' && window.RoleApiBindings) {
+        return window.RoleApiBindings.fallbackConfigs(feature, currentConfig) || [];
+    }
     if (typeof db === 'undefined' || !Array.isArray(db.apiNodes)) return [];
     const route = db.apiNodeRoutes && db.apiNodeRoutes[feature];
     if (!route || route.failureMode !== 'automatic') return [];
     return db.apiNodes
-        .filter(node => node && node.enabled !== false && node.id !== currentNodeId && Array.isArray(node.features) && node.features.includes(feature))
+        .filter(node => node && !node.ownerCharacterId && node.enabled !== false && node.id !== currentNodeId && Array.isArray(node.features) && node.features.includes(feature))
         .map(node => {
             return applyApiNodeRouteParameterMode(apiNodeToConfig(node), route);
         });
