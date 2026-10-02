@@ -125,6 +125,46 @@ assert.equal(policy.preferences('char:a').postIntervalMs,13*60000);
 assert.equal(policy.preferences('char:b').postIntervalMs,8*60000);
 policy.localPreferences('char:a').replyEnabled=true;
 
+// Chat linkage is on for old data, inherits globally, and has one per-role override.
+assert.equal(policy.preferences().chatLinked,true);
+assert.equal(sandbox.Moments.isChatLinked('fresh'),true);
+assert.equal(policy.localPreferences('char:fresh').chatLinked,undefined);
+assert.ok(sandbox.Moments.promptForCharacter('fresh').includes('<visible_moments>'));
+policy.open();form=element('moments-controls-form');
+const linkSwitch=form.elements['preference.chatLinked'];
+assert.equal(linkSwitch.checked,true);
+assert.match(form.innerHTML,/聊天关联动态/);
+linkSwitch.checked=false;await test.save({preventDefault(){}});
+assert.equal(policy.preferences().chatLinked,false);
+assert.equal(sandbox.screen,'moments-settings-screen');
+assert.equal(sandbox.toast,'动态设置已保存');
+assert.equal(sandbox.Moments.promptForCharacter('a'),'');
+assert.equal(policy.settings('char:a').actions.post,true,'linkage does not change dynamic participation');
+policy.localPreferences('char:fresh').chatLinked=true;
+sandbox.Moments.loadCharacterSettings(db.characters[2]);
+assert.equal(element('setting-moments-chat-linked').value,'on');
+assert.ok(sandbox.Moments.promptForCharacter('fresh').includes('<visible_moments>'));
+element('setting-moments-chat-linked').value='inherit';
+sandbox.Moments.saveCharacterSettings(db.characters[2]);
+assert.equal(policy.localPreferences('char:fresh').chatLinked,undefined);
+assert.equal(sandbox.Moments.promptForCharacter('fresh'),'');
+policy.open();form=element('moments-controls-form');
+assert.equal(form.elements['preference.chatLinked'].checked,false,'reopening retains the global choice');
+form.elements['preference.chatLinked'].checked=true;await test.save({preventDefault(){}});
+element('setting-moments-chat-linked').value='off';
+sandbox.Moments.saveCharacterSettings(db.characters[2]);
+assert.equal(sandbox.Moments.promptForCharacter('fresh'),'','a role can opt out of enabled global linkage');
+sandbox.Moments.loadCharacterSettings(db.characters[2]);
+assert.equal(element('setting-moments-chat-linked').value,'off');
+policy.open('char:fresh');await test.save({preventDefault(){}});
+assert.equal(policy.localPreferences('char:fresh').chatLinked,false,'other actor controls preserve the hidden override');
+policy.open();form=element('moments-controls-form');
+form.elements['preference.chatLinked'].checked=false;saveSucceeds=false;
+await test.save({preventDefault(){}});saveSucceeds=true;
+assert.equal(policy.preferences().chatLinked,true,'failed saving restores the previous global choice');
+assert.equal(sandbox.toast,'设置保存失败');
+delete policy.localPreferences('char:fresh').chatLinked;
+
 const prompts=[];
 sandbox.fetchAiResponse=async(_config,body,_headers,_url,_stream,opts)=>{
     if(opts?.beforeRequest)await opts.beforeRequest();
@@ -151,6 +191,51 @@ const rolePrompt=prompts.find(p=>p.includes('私聊秘密标记'));
 assert.match(rolePrompt,/用户身份设定|相识多年的朋友/);assert.match(rolePrompt,/共同记忆标记/);assert.match(rolePrompt,/角色世界书标记/);
 const npcPrompt=prompts.find(p=>p.includes('你的身份：人脉'));
 assert.doesNotMatch(npcPrompt,/私聊秘密标记|共同记忆标记|角色世界书标记/,'NPC does not inherit owner private context or unbound books');
+
+// Closed linkage removes automatic dynamic knowledge in every prompt path, not user conversation.
+test.data().preferences.chatLinked=false;
+const historySnapshot=JSON.stringify(db.characters[0].history);
+const activitySnapshot=JSON.stringify(db.moments.activityEvents);
+assert.equal(sandbox.Moments.promptForCharacter('a'),'');
+assert.match(moments.interactionContextFor('char:a',post),/私聊秘密标记/,'dynamics still remember private chat');
+assert.match(moments.interactionContextFor('char:a',post),/共同记忆标记/,'dynamics still remember shared memories');
+assert.equal(JSON.stringify(db.characters[0].history),historySnapshot);
+assert.equal(JSON.stringify(db.moments.activityEvents),activitySnapshot);
+const promptSandbox={...sandbox,
+    getActiveWorldBooksContents:()=>({before:'',middle:'',after:''}),getEffectivePersona:c=>c.persona||'',
+    getOnlineLogicRules:()=>'',getOnlineOutputFormats:()=>'',pad:v=>String(v).padStart(2,'0'),
+};
+promptSandbox.window=promptSandbox;
+const uiSource=fs.readFileSync(new URL('../js/core/ui-and-content-utils.js',import.meta.url),'utf8');
+const filterStart=uiSource.indexOf('function filterHistoryForAI(');
+const filterEnd=uiSource.indexOf('\nfunction ',filterStart+1);
+vm.runInNewContext(uiSource.slice(filterStart,filterEnd),promptSandbox);
+const userMessage={role:'user',content:'我想聊聊今天的动态'};
+const activityMessage={role:'system',content:'自动动态旁白标记',isMomentsActivity:true,excludeFromContext:true};
+assert.deepEqual(Array.from(promptSandbox.filterHistoryForAI(db.characters[0],[activityMessage,userMessage]),m=>m.content),[userMessage.content]);
+assert.deepEqual(Array.from(promptSandbox.filterHistoryForAI(db.characters[0],[activityMessage,userMessage],true),m=>m.content),[userMessage.content]);
+vm.runInNewContext(fs.readFileSync(new URL('../js/modules/chat-ai/private-prompt.js',import.meta.url),'utf8'),promptSandbox);
+const character={id:'a',realName:'甲',myName:'我',persona:'经营花店',history:[userMessage],memoryJournals:[]};
+const oldMagic=db.magicRoom;
+db.magicRoom={};
+assert.doesNotMatch(promptSandbox.generatePrivateSystemPrompt(character),/<visible_moments>|MOMENT:/);
+db.magicRoom={customPromptEnabled:true,customPromptTemplate:'自定义 {{角色名}} {{动态能力与已看内容}}'};
+vm.runInNewContext(fs.readFileSync(new URL('../js/modules/chat-ai/prompt-studio.js',import.meta.url),'utf8'),promptSandbox);
+assert.doesNotMatch(promptSandbox.generatePrivateSystemPrompt(character),/<visible_moments>|MOMENT:|\{\{动态能力与已看内容\}\}/);
+db.magicRoom={};promptSandbox.PromptStudio=undefined;
+character.activeNodeId='node';character.nodes=[{id:'node',name:'剧情节点',prompt:'继续剧情',readMemory:true}];
+const actualHistory=db.characters[0].history;db.characters[0].history=[activityMessage,userMessage,{isNodeBoundary:true,nodeAction:'start',nodeId:'node',content:''}];
+character.history=db.characters[0].history;
+assert.doesNotMatch(promptSandbox.generatePrivateSystemPrompt(character),/<visible_moments>|MOMENT:|自动动态旁白标记/);
+delete character.activeNodeId;
+const linked={id:'alt',source:'forum',linkedCharId:'a',realName:'小号',history:[],momentsSettings:{preferences:{}}};
+db.characters.push(linked);
+assert.doesNotMatch(promptSandbox.generatePrivateSystemPrompt(linked),/自动动态旁白标记/);
+vm.runInNewContext(fs.readFileSync(new URL('../js/modules/chat-ai/prompt-studio.js',import.meta.url),'utf8'),promptSandbox);
+assert.doesNotMatch(promptSandbox.PromptStudio.buildVariables(linked,{} )['关系与功能上下文'],/自动动态旁白标记/);
+db.characters.pop();db.characters[0].history=actualHistory;db.magicRoom=oldMagic;
+test.data().preferences.chatLinked=true;
+assert.match(sandbox.Moments.promptForCharacter('a'),/<visible_moments>/,'turning back on reuses the retained dynamic history');
 response={replies:[]};await policy.postEvent(post);await settle();assert.equal(test.data().tasks.filter(t=>t.type==='view'&&t.postId===post.id).length,3,'same publication never schedules duplicate views');assert.equal(post.viewResults.length,3);
 for(const task of test.data().tasks)if(task.status==='waiting')task.status='cancelled';response={like:true,comment:'我陪你聊聊',replyTo:'',thought:'想陪伴'};
 moments.showResult(post.id);assert.match(element('moments-result-content').innerHTML,/查看返回详情/);assert.doesNotMatch(element('moments-result-content').innerHTML,/过段时间/);
@@ -233,4 +318,12 @@ assert.equal(test.data().tasks.filter(t=>t.commentId===resume.id).length,3,'new 
 const author=post.authorPersonaId;db.myPersonaPresets.push({id:'other',name:'另一身份',persona:'另一身份秘密'});db.activePersonaId='other';
 assert.equal(post.authorPersonaId,author);
 assert.doesNotMatch(moments.interactionContextFor('char:a',post),/另一身份秘密/);
+// The actual dynamic generation request also keeps chat context while linkage is off.
+test.data().preferences.chatLinked=false;
+response={text:'花店今天很忙'};
+const generationPromptStart=prompts.length;
+assert.equal(await sandbox.Moments.generatePost('char:a','post',true),true);
+assert.ok(prompts.slice(generationPromptStart).some(prompt=>prompt.includes('私聊秘密标记')));
+await settle();
+assert.equal(sandbox.Moments.promptForCharacter('a'),'');
 console.log('Moments simple settings, presets, exact custom values, per-item overrides, automatic views, reminders, identities, NPC privacy, errors and pacing passed.');

@@ -139,9 +139,9 @@ function handleMessageLongPress(messageWrapper, x, y) {
         });
     }
 
-    // 下载语音：全局 TTS 开关 + 角色 TTS 开关都开启时才显示
+    // 下载语音：检查消息对应的角色/用户配置，并保留当前聊天语音开关
     if (!isWithdrawn && !isInvisibleMessage &&
-        typeof MinimaxTTSService !== 'undefined' && MinimaxTTSService.config.enabled && MinimaxTTSService.isConfigured() &&
+        typeof MinimaxTTSService !== 'undefined' && (message.role === 'user' ? MinimaxTTSService.isUserConfigured() : MinimaxTTSService.isConfigured()) &&
         chat.ttsConfig && chat.ttsConfig.chatTtsEnabled &&
         typeof VoiceSelector !== 'undefined') {
         menuItems.push({
@@ -165,7 +165,7 @@ function handleMessageLongPress(messageWrapper, x, y) {
                 if (textMatch && textMatch[1]) {
                     text = textMatch[1];
                 }
-                text = text.replace(/\[.*?\]/g, '').replace(/[\(（].*?[\)）]/g, '').replace(/「.*?」/g, '').trim();
+                text = MinimaxTTSService.cleanText(text, isUserMsg ? MinimaxTTSService.userConfig : MinimaxTTSService.config);
                 if (!text) {
                     showToast('消息内容为空');
                     return;

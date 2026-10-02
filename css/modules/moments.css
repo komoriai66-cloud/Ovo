@@ -157,6 +157,8 @@
 .moments-field { display:block; margin:9px 0; color:#444; font-size:12.5px; }
 .moments-field input, .moments-field textarea, .moments-field select, .moments-editor-panel input, .moments-editor-panel textarea, .moments-editor-panel select { display:block; width:100%; min-width:0; margin-top:5px; border:1px solid #e2e8f0; border-radius:8px; background:#ffffff; color:#181818; padding:8px 10px; outline-color:#111; font-family:inherit; font-size:13px; line-height:1.4; }
 .moments-nickname-switches { display:grid; gap:2px; }
+.moments-chat-link-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; margin:12px 0 0; color:inherit; font-size:12.5px; }
+.moments-chat-link-setting .kkt-switch { flex-shrink:0; }
 .moments-nickname-switches label { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:32px; color:#444; font-size:12.5px; }
 .moments-nickname-switches input { flex:none; width:16px; height:16px; margin:0; accent-color:#111; }
 .moments-contact-nickname-options { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:7px; }

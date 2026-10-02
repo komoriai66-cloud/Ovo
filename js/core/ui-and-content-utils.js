@@ -859,8 +859,9 @@ function getMixedContent(responseData) {
 
 // 过滤聊天记录用于 AI 上下文 (包含状态栏剔除和双语格式化)
 function filterHistoryForAI(chat, historySlice, ignoreContextDisabled = false) {
+    const includeMomentsActivity = window.Moments?.isChatLinked?.(chat.id) !== false;
     // 仅复制下方过滤逻辑会改动的消息及 part；图片数据字符串保持引用，避免每次请求复制整份 Base64。
-    let filteredHistory = (historySlice || chat.history || []).map(message => ({
+    let filteredHistory = (historySlice || chat.history || []).filter(message => includeMomentsActivity || !message.isMomentsActivity).map(message => ({
         ...message,
         parts: Array.isArray(message.parts) ? message.parts.map(part => ({ ...part })) : message.parts
     }));

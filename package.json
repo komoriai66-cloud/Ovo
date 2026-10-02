@@ -20,6 +20,7 @@
     "test:service-worker": "node scripts/test-service-worker.mjs",
     "test:mcp": "node scripts/test-mcp.mjs",
     "test:media": "node scripts/test-media-providers.mjs",
+    "test:tts": "node scripts/test-tts-providers.mjs",
     "test:vibe": "node scripts/test-novelai-vibe.mjs",
     "test:role-api": "node scripts/test-role-api.mjs"
   },

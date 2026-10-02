@@ -1088,6 +1088,22 @@ textarea.api-generation-value { min-height: 48px; height: 48px; resize: vertical
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
+/* ElevenLabs follows the existing TTS rows without widening narrow screens. */
+#api-settings-screen .tts-eleven-config .kkt-item-label { flex-shrink: 0; white-space: nowrap; }
+#api-settings-screen .tts-eleven-config .kkt-item-control { min-width: 0; flex: 1; }
+#api-settings-screen .tts-eleven-config input,
+#api-settings-screen .tts-eleven-config select { width: 100%; min-width: 0; }
+#api-settings-screen .tts-eleven-control input,
+#api-settings-screen .tts-eleven-control select { flex: 1; width: 0; overflow: hidden; text-overflow: ellipsis; }
+#api-settings-screen .tts-eleven-control .btn { flex-shrink: 0; margin: 0; padding: 4px 8px; font-size: 12px; }
+.tts-eleven-tip { padding: 10px 15px 0; }
+#api-pane-tts .api-card-header > div { flex: 1; min-width: 0; }
+#api-pane-tts .api-card-header .kkt-switch { flex-shrink: 0; }
+#api-pane-tts .api-section-card > .kkt-item .kkt-item-label { white-space: nowrap; flex-shrink: 0; }
+#api-pane-tts .api-section-card > .kkt-item .kkt-item-control { min-width: 0; }
+#api-pane-tts .api-section-card > .kkt-item select { max-width: 100%; min-width: 0; }
+#api-pane-tts .api-actions-row .btn { min-width: 0; padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+
 /* NovelAI 创作工具：沿用设置区域的紧凑尺寸与按钮。 */
 #novelai-studio [hidden] { display: none !important; }
 #novelai-studio .kkt-item-control { min-width: 0; }

@@ -60,12 +60,13 @@
         const s={...character.momentsSettings};
         if (controls) {
             const p=controls.preferences(charActor(character.id));
-            for(const key of ['postEnabled','storyEnabled','browseEnabled','watchEnabled','likeEnabled','commentEnabled','replyEnabled','contactsEnabled'])s[key]=p[key];
+            for(const key of ['postEnabled','storyEnabled','browseEnabled','watchEnabled','likeEnabled','commentEnabled','replyEnabled','contactsEnabled','chatLinked'])s[key]=p[key];
             s.interactEnabled=p.likeEnabled||p.commentEnabled||p.replyEnabled;
         } else {
             for(const key of ['postEnabled','storyEnabled','browseEnabled','interactEnabled','contactsEnabled'])s[key]=s[key]===true;
             for(const key of ['likeEnabled','commentEnabled','replyEnabled'])if(typeof s[key]!=='boolean')s[key]=s.interactEnabled;
             if(typeof s.watchEnabled!=='boolean')s.watchEnabled=true;
+            s.chatLinked=(s.preferences?.chatLinked ?? ensure().controls?.preferences?.chatLinked) !== false;
         }
         s.showActivityNarration=s.showActivityNarration===true;
         for(const key of ['nicknameAwareness','selfRename'])if(!['inherit','on','off'].includes(s[key]))s[key]='inherit';
@@ -526,9 +527,9 @@
         el('moments-story-viewer').hidden = false;
     }
 
-    const roleBehaviorInputs = { 'setting-moments-post-enabled':'postEnabled', 'setting-moments-story-enabled':'storyEnabled', 'setting-moments-browse-enabled':'browseEnabled', 'setting-moments-watch-enabled':'watchEnabled', 'setting-moments-like-enabled':'likeEnabled', 'setting-moments-comment-enabled':'commentEnabled', 'setting-moments-reply-enabled':'replyEnabled', 'setting-moments-contacts-enabled':'contactsEnabled' };
+    const roleBehaviorInputs = { 'setting-moments-post-enabled':'postEnabled', 'setting-moments-story-enabled':'storyEnabled', 'setting-moments-browse-enabled':'browseEnabled', 'setting-moments-watch-enabled':'watchEnabled', 'setting-moments-like-enabled':'likeEnabled', 'setting-moments-comment-enabled':'commentEnabled', 'setting-moments-reply-enabled':'replyEnabled', 'setting-moments-contacts-enabled':'contactsEnabled', 'setting-moments-chat-linked':'chatLinked' };
     function loadCharacterSettings(character) {
-        const s=characterSettings(character), actorId=charActor(character.id), local=controls?.localPreferences(actorId)||{};
+        const s=characterSettings(character), actorId=charActor(character.id), local=controls?.localPreferences(actorId)||character.momentsSettings.preferences||{};
         for(const [id,key] of Object.entries(roleBehaviorInputs))if(el(id))el(id).value=Object.hasOwn(local,key)?local[key]?'on':'off':'inherit';
         if(el('setting-moments-show-activity-narration'))el('setting-moments-show-activity-narration').checked=s.showActivityNarration;
         for(const [id,key] of [['setting-moments-nickname-awareness','nicknameAwareness'],['setting-moments-self-rename','selfRename'],['setting-moments-image-mode','imageMode'],['setting-moments-voice-mode','voiceMode']])if(el(id))el(id).value=s[key];
@@ -2213,12 +2214,16 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         } finally { state.running = false; }
         return summary;
     }
+    function isChatLinked(charId) {
+        const character = findCharacter(charActor(charId));
+        return !character || characterSettings(character).chatLinked !== false;
+    }
     function promptForCharacter(charId) {
         const actorId = charActor(charId);
         const m = ensure();
         const character = findCharacter(actorId);
         const settings = character && characterSettings(character);
-        if (!settings) return '';
+        if (!settings || settings.chatLinked === false) return '';
         const activity = activityContext(actorId);
         const ownSignature = character.momentsProfile?.signature || '';
         const knownUserId = knownPersonaId(actorId);
@@ -2725,5 +2730,5 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         });
     }
     function open() { if (!state.initialized) init(); renderFeed(); switchScreen('moments-screen'); }
-    window.Moments = { init, open, loadCharacterSettings, saveCharacterSettings, promptForCharacter, prepareForChat, consumeAiCommands, generatePost, promptDefaults, visibleTo, canSeeInteraction };
+    window.Moments = { init, open, loadCharacterSettings, saveCharacterSettings, isChatLinked, promptForCharacter, prepareForChat, consumeAiCommands, generatePost, promptDefaults, visibleTo, canSeeInteraction };
 })();

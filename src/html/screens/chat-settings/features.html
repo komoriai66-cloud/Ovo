@@ -503,6 +503,8 @@
                             <!-- 单个角色只在聊天设置覆盖全局 -->
                             <div class="kkt-group" style="margin-top:15px;">
                                 <div class="kkt-item"><div class="kkt-item-label">动态与人脉<p class="kkt-item-hint">默认跟随全局。只修改需要单独设置的项目，其他项目继续跟随。</p></div></div>
+                                <div class="kkt-item"><div class="kkt-item-label">聊天关联动态</div><div class="kkt-item-control"><select id="setting-moments-chat-linked" aria-label="聊天关联动态" aria-describedby="setting-moments-chat-link-hint"><option value="inherit">跟随全局</option><option value="on">开启</option><option value="off">关闭</option></select></div></div>
+                                <div class="kkt-item" style="padding-top:0;"><p class="kkt-item-hint" id="setting-moments-chat-link-hint" style="margin:0;">关闭后，聊天不再自动注入动态内容与能力提示词；动态仍会参考聊天记录。</p></div>
                                 <div class="kkt-item"><div class="kkt-item-label">角色发动态</div><div class="kkt-item-control"><select id="setting-moments-post-enabled"><option value="inherit">跟随全局</option><option value="on">允许</option><option value="off">不发动态</option></select></div></div>
                                 <div class="kkt-item"><div class="kkt-item-label">角色发 Story</div><div class="kkt-item-control"><select id="setting-moments-story-enabled"><option value="inherit">跟随全局</option><option value="on">允许</option><option value="off">不发 Story</option></select></div></div>
                                 <div class="kkt-item"><div class="kkt-item-label">发布后观看</div><div class="kkt-item-control"><select id="setting-moments-watch-enabled"><option value="inherit">跟随全局</option><option value="on">允许</option><option value="off">不观看</option></select></div></div>

@@ -1,4 +1,5 @@
 function generatePrivateSystemPrompt(character, opts) {
+    const includeMomentsActivity = window.Moments?.isChatLinked?.(character.id) !== false;
     opts = opts || {};
     if (window.PromptStudio && typeof window.PromptStudio.compile === 'function') {
         const studioResult = window.PromptStudio.compile(character, opts);
@@ -526,7 +527,7 @@ function generatePrivateSystemPrompt(character, opts) {
                 }
                 const altChar = altChars.find(function(c) { return c.forumUserId === forumUserId; });
                 if (altChar && altChar.history && altChar.history.length > 0) {
-                    const recentAlt = altChar.history.filter(function(m) { return !m.isContextDisabled; }).slice(-syncLimit);
+                    const recentAlt = altChar.history.filter(function(m) { return !m.isContextDisabled && (includeMomentsActivity || !m.isMomentsActivity); }).slice(-syncLimit);
                     if (recentAlt.length > 0) {
                         altBlock += '[加好友后聊天] 小号「' + (altChar.realName || altName) + '」与用户：\n';
                         recentAlt.forEach(function(m) {
@@ -544,7 +545,7 @@ function generatePrivateSystemPrompt(character, opts) {
     } else if (enableCharAltDm && linkedChar && linkedChar.history && linkedChar.history.length > 0) {
         // 小号：注入主号与用户的最近对话（条数=主号的角色上下文）
         const mainSyncLimit = Math.max(1, (linkedChar.maxMemory != null ? parseInt(linkedChar.maxMemory, 10) : 20) || 20);
-        const mainRecent = linkedChar.history.filter(function(m) { return !m.isContextDisabled; }).slice(-mainSyncLimit);
+        const mainRecent = linkedChar.history.filter(function(m) { return !m.isContextDisabled && (includeMomentsActivity || !m.isMomentsActivity); }).slice(-mainSyncLimit);
         if (mainRecent.length > 0) {
             let mainBlock = '\n<main_shared_memory>\n【主号记忆互通】你与主号记忆互通。主号在聊天里与用户说的最近对话你都知道。以下为主号与用户的最近互动' + mainRecent.length + '条：\n\n';
             mainRecent.forEach(function(m) {

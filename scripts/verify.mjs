@@ -257,6 +257,31 @@ function omitStatusStorageAdditions(node) {
     });
 }
 omitStatusStorageAdditions(protectedDocument);
+// Exclude only the authorized additive TTS controls; keep the release baseline
+// protecting every old provider, field, preset and unrelated screen.
+const ttsAdditionIds = ['test-user-tts-btn', ...['elevenlabs-', 'elevenlabs-user-'].flatMap(prefix =>
+    ['tts-config-wrap', 'api-key', 'model', 'load-models', 'voice-id', 'select-voice', 'url'].map(suffix => prefix + suffix))];
+function omitTtsAdditions(node) {
+    const ownId = node.attrs?.find(attr => attr.name === 'id')?.value;
+    if (['minimax-group-id', 'minimax-user-group-id'].includes(ownId)) {
+        const placeholder = node.attrs?.find(attr => attr.name === 'placeholder');
+        if (placeholder) placeholder.value = '输入 GroupId';
+    }
+    node.childNodes = (node.childNodes || []).filter(child => {
+        const id = child.attrs?.find(attr => attr.name === 'id')?.value;
+        if (['elevenlabs-tts-config-wrap', 'elevenlabs-user-tts-config-wrap'].includes(id)) return false;
+        if (child.attrs?.some(attr => attr.name === 'class' && attr.value === 'api-actions-row') && findNodeById(child, 'test-user-tts-btn')) return false;
+        if (child.tagName === 'option') {
+            const value = child.attrs?.find(attr => attr.name === 'value')?.value;
+            if (['tts-provider', 'user-tts-provider'].includes(ownId) && value === 'elevenlabs') return false;
+            if (['minimax-domain', 'minimax-user-domain'].includes(ownId) && ['api.minimax.cn', 'api.minimax.io'].includes(value)) return false;
+            if (['minimax-tts-model', 'minimax-user-tts-model'].includes(ownId) && ['speech-01-hd', 'speech-01-turbo'].includes(value)) return false;
+        }
+        omitTtsAdditions(child);
+        return true;
+    });
+}
+omitTtsAdditions(findNodeById(protectedDocument, 'api-pane-tts'));
 const actualDomSignature = getNonScriptDomSignature(protectedDocument);
 if (actualDomSignature !== protectedDomSignature && actualDomSignature !== preexistingWorkspaceDomSignature) {
     fail(`Assembled non-script DOM differs from the protected release structure: ${actualDomSignature}`);
@@ -264,10 +289,13 @@ if (actualDomSignature !== protectedDomSignature && actualDomSignature !== preex
 const textualIds = [...logicalHtml.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map(match => match[1]);
 const duplicateIds = [...new Set(textualIds.filter((id, index) => textualIds.indexOf(id) !== index))];
 const momentsRedesignIdDelta = 8;
-if (textualIds.length !== 2636 + novelAiAdditionIds.length + statusStorageAdditionIds.length + momentsRedesignIdDelta) fail(`Unexpected assembled ID count after authorized additions: ${textualIds.length}`);
+const momentsChatLinkIds = ['setting-moments-chat-linked', 'setting-moments-chat-link-hint'];
+for (const id of momentsChatLinkIds) if (!textualIds.includes(id)) fail(`Missing moments chat linkage ID: ${id}`);
+if (textualIds.length !== 2636 + novelAiAdditionIds.length + statusStorageAdditionIds.length + momentsRedesignIdDelta + momentsChatLinkIds.length + ttsAdditionIds.length) fail(`Unexpected assembled ID count after authorized additions: ${textualIds.length}`);
 if (duplicateIds.length) fail(`Duplicate assembled IDs: ${duplicateIds.join(', ')}`);
 
 const requiredIds = [
+    ...ttsAdditionIds,
     ...novelAiAdditionIds,
     ...statusStorageAdditionIds,
     'moments-controls-screen', 'moments-controls-back', 'moments-controls-title', 'moments-controls-pause',

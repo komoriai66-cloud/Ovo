@@ -14,7 +14,7 @@
         medium: { label: '中度', postIntervalMs: 3600000, replyDelayMs: 60000, npcReplyDelayMs: 2 * 60000, conversationRounds: 3 },
         heavy: { label: '重度', postIntervalMs: 15 * 60000, replyDelayMs: 0, npcReplyDelayMs: 0, conversationRounds: 6 },
     };
-    const preferenceDefaults = { preset: 'medium', ...presets.medium, postEnabled: true, storyEnabled: true, browseEnabled: true, watchEnabled: true, likeEnabled: true, commentEnabled: true, replyEnabled: true, contactsEnabled: true };
+    const preferenceDefaults = { preset: 'medium', ...presets.medium, postEnabled: true, storyEnabled: true, browseEnabled: true, watchEnabled: true, likeEnabled: true, commentEnabled: true, replyEnabled: true, contactsEnabled: true, chatLinked: true };
     const behaviorFields = [['postEnabled', '发动态'], ['storyEnabled', '发 Story'], ['watchEnabled', '发布后观看'], ['browseEnabled', '自主浏览'], ['likeEnabled', '点赞'], ['commentEnabled', '发表评论'], ['replyEnabled', '回复评论'], ['contactsEnabled', '人脉参与']];
     const tempoFields = [['postIntervalMs', '角色发动态', '分钟', 60000, 1, 240], ['replyDelayMs', '角色接话', '秒', 1000, 0, 300], ['npcReplyDelayMs', 'NPC 接话', '秒', 1000, 0, 300]];
     let adapter, timer, ticking = false, currentScope = 'global', returnScreen = 'moments-settings-screen';
@@ -400,7 +400,8 @@
         currentScope=scope;returnScreen=back;
         const local=scope==='global'?null:localPreferences(scope), values=preferences(scope==='global'?'':scope);
         const behaviors=behaviorFields.filter(([key])=>scope==='global'||key!=='contactsEnabled').map(([key,label])=>`<label class="moments-field">${label}<select name="preference.${key}">${local?'<option value="inherit" '+(!Object.hasOwn(local,key)?'selected':'')+'>跟随全局</option>':''}<option value="on" ${(local?local[key]:values[key])===true?'selected':''}>允许</option><option value="off" ${(local?local[key]:values[key])===false?'selected':''}>${key==='watchEnabled'?'不观看':key==='contactsEnabled'?'不让人脉参与':'不'+label}</option></select></label>`).join('');
-        el('moments-controls-form').innerHTML=`<section class="moments-settings-card"><h2>${scope==='global'?'动态活跃度':esc(scopeName(scope))+'的动态'}</h2>${tempoHtml(values,local)}</section><section class="moments-settings-card"><h2>${scope==='global'?'默认参与方式':'参与方式'}</h2><div class="moments-behavior-grid">${behaviors}</div><p class="moments-hint">角色的单独设置在聊天设置里修改；未单独设置的项目跟随这里。</p></section><div class="moments-inline-actions"><button type="submit" class="moments-primary-btn">保存</button><button type="button" data-control-action="back">返回</button></div>`;
+        const chatLink=scope==='global'?`<div class="moments-chat-link-setting"><span>聊天关联动态</span><label class="kkt-switch"><input type="checkbox" name="preference.chatLinked" aria-label="聊天关联动态" aria-describedby="moments-chat-link-hint" ${values.chatLinked!==false?'checked':''}><span class="kkt-slider"></span></label></div><p class="moments-hint" id="moments-chat-link-hint">关闭后，聊天不再自动注入动态内容与能力提示词；动态仍会参考聊天记录。</p>`:'';
+        el('moments-controls-form').innerHTML=`<section class="moments-settings-card"><h2>${scope==='global'?'动态活跃度':esc(scopeName(scope))+'的动态'}</h2>${tempoHtml(values,local)}</section><section class="moments-settings-card"><h2>${scope==='global'?'默认参与方式':'参与方式'}</h2><div class="moments-behavior-grid">${behaviors}</div><p class="moments-hint">角色的单独设置在聊天设置里修改；未单独设置的项目跟随这里。</p>${chatLink}</section><div class="moments-inline-actions"><button type="submit" class="moments-primary-btn">保存</button><button type="button" data-control-action="back">返回</button></div>`;
         bindTempo('moments-tempo',{...values,preset:local?(local.preset||'inherit'):values.preset});
         el('moments-controls-title').textContent=scope==='global'?'全局动态设置':scopeName(scope)+'的动态';
         el('moments-controls-pause').hidden=true;
@@ -419,6 +420,8 @@
         try{
             const next=readTempo('moments-tempo',local), form=el('moments-controls-form');
             for(const [key] of behaviorFields){const v=form.elements['preference.'+key]?.value;if(v==='on'||v==='off')next[key]=v==='on';}
+            if(!local)next.chatLinked=form.elements['preference.chatLinked'].checked;
+            else if(Object.hasOwn(previous,'chatLinked'))next.chatLinked=previous.chatLinked;
             if(local)holder(currentScope).preferences=next;else data().preferences={...preferenceDefaults,...next};
             if(!await persistScope(currentScope))throw new Error('设置保存失败');
             await reschedule(currentScope);say('动态设置已保存');switchScreen(returnScreen);
