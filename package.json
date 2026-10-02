@@ -18,7 +18,7 @@
     "test:forum": "node scripts/test-forum-system.mjs",
     "test:resilience": "node scripts/test-reply-resilience.mjs && node scripts/test-keep-alive.mjs",
     "test:wallet": "node scripts/test-wallet-background.mjs",
-    "test:service-worker": "node scripts/test-service-worker.mjs",
+    "test:service-worker": "node scripts/test-service-worker.mjs && node scripts/test-file-update.mjs",
     "test:mcp": "node scripts/test-mcp.mjs",
     "test:media": "node scripts/test-media-providers.mjs",
     "test:tts": "node scripts/test-tts-providers.mjs",

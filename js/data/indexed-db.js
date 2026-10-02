@@ -236,6 +236,7 @@ const performFullSave = async () => {
         }).filter(p => p);
         await Promise.all(settingsPromises);
         window.ChatTokenStats?.changed(null);
+        return true;
     } catch (e) {
         console.error("saveData failed:", e);
         if (typeof showToast === 'function') {
@@ -247,6 +248,7 @@ const performFullSave = async () => {
                 : '保存数据失败: ' + e.message;
             showToast(msg, 6000);
         }
+        return false;
     }
 };
 
@@ -257,14 +259,16 @@ const saveData = async () => {
     }
 
     saveDataPromise = (async () => {
+        let saved = true;
         do {
             saveDataRequestedWhileRunning = false;
-            await performFullSave();
+            if (await performFullSave() === false) saved = false;
         } while (saveDataRequestedWhileRunning);
+        return saved;
     })();
 
     try {
-        await saveDataPromise;
+        return await saveDataPromise;
     } finally {
         saveDataPromise = null;
     }
