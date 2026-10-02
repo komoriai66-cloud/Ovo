@@ -484,6 +484,8 @@ const loadData = async () => {
             forumNotifications: [],
             forumDrafts: [],
             forumSchemaVersion: 2,
+            pomodoroRecords: [],
+            pomodoroActiveSession: null,
             pomodoroTasks: [],
             pomodoroSettings: { boundCharId: null, userPersona: '', focusBackground: '', taskCardBackground: '', encouragementMinutes: 25, pokeLimit: 5, globalWorldBookIds: [] },
             insWidgetSettings: { avatar1: 'https://i.postimg.cc/Y96LPskq/o-o-2.jpg', bubble1: 'love u.', avatar2: 'https://i.postimg.cc/GtbTnxhP/o-o-1.jpg', bubble2: 'miss u.' },
@@ -891,6 +893,8 @@ const dataStorage = {
         categorizedSizes.personalization += await measure(db.homeSignature);
         categorizedSizes.personalization += await measure(db.pomodoroTasks);
         categorizedSizes.personalization += await measure(db.pomodoroSettings);
+        categorizedSizes.personalization += await measure(db.pomodoroRecords);
+        categorizedSizes.personalization += await measure(db.pomodoroActiveSession);
         categorizedSizes.personalization += await measure(db.insWidgetSettings);
         categorizedSizes.personalization += await measure(db.homeWidgetSettings);
         categorizedSizes.personalization += await measure(db.moreProfileCardBg);

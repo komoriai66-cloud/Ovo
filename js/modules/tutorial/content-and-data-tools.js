@@ -1073,6 +1073,7 @@ function renderTutorialContent() {
             // 仅清除本项目的 localStorage 键（不影响其他网站）
             const projectLocalStorageKeys = [
                 'lastSeenVersion',
+                'lastSeenUpdateLogRevision',
                 'gh_config',
                 'storage_persist_prompted',
                 'imgbb_api_key',

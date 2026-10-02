@@ -541,6 +541,13 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                 console.warn('[FollowUpReply] could not schedule follow-up:', followUpScheduleError);
             }
         }
+        if (!isSummary && !isCharBlockedMonologue && !isPhoneControlRevokeAttempt && chatType === 'private' && window.Moments?.chatEvent) {
+            try {
+                await window.Moments.chatEvent(chat, isBackground, replyTask?.id || '');
+            } catch (momentsScheduleError) {
+                console.warn('[Moments] could not schedule NPC activity:', momentsScheduleError);
+            }
+        }
     };
 
     if (window.StatusStorage?.isChatLocked(chatType, chatId)) {
@@ -614,7 +621,7 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
                     console.warn('[VectorMemory] failed to prepare prompt context:', error);
                 }
             }
-            systemPrompt = generatePrivateSystemPrompt(chat, { isPhoneControlRevokeAttempt, weatherText });
+            systemPrompt = generatePrivateSystemPrompt(chat, { isPhoneControlRevokeAttempt, weatherText, isBackground });
         } else {
             if (typeof generateGroupSystemPrompt === 'function') {
                 systemPrompt = generateGroupSystemPrompt(chat, { targetMember: replyOptions.member || null });

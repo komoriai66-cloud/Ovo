@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:pomodoro": "node scripts/test-pomodoro.mjs",
     "test:status-storage": "node scripts/test-status-storage.mjs",
     "test:tokens": "node scripts/test-token-accounting.mjs && node scripts/test-token-storage.mjs",
     "build": "node scripts/build.mjs",

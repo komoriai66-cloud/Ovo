@@ -69,6 +69,7 @@
             s.chatLinked=(s.preferences?.chatLinked ?? ensure().controls?.preferences?.chatLinked) !== false;
         }
         s.showActivityNarration=s.showActivityNarration===true;
+        s.backgroundPostEnabled=s.backgroundPostEnabled!==false;
         for(const key of ['nicknameAwareness','selfRename'])if(!['inherit','on','off'].includes(s[key]))s[key]='inherit';
         s.imageMode=mediaModes.has(s.imageMode)?s.imageMode:'off';s.voiceMode=mediaModes.has(s.voiceMode)?s.voiceMode:'off';
         return s;
@@ -532,6 +533,7 @@
         const s=characterSettings(character), actorId=charActor(character.id), local=controls?.localPreferences(actorId)||character.momentsSettings.preferences||{};
         for(const [id,key] of Object.entries(roleBehaviorInputs))if(el(id))el(id).value=Object.hasOwn(local,key)?local[key]?'on':'off':'inherit';
         if(el('setting-moments-show-activity-narration'))el('setting-moments-show-activity-narration').checked=s.showActivityNarration;
+        if(el('setting-moments-background-post-enabled'))el('setting-moments-background-post-enabled').checked=s.backgroundPostEnabled;
         for(const [id,key] of [['setting-moments-nickname-awareness','nicknameAwareness'],['setting-moments-self-rename','selfRename'],['setting-moments-image-mode','imageMode'],['setting-moments-voice-mode','voiceMode']])if(el(id))el(id).value=s[key];
         const identity=el('setting-moments-user-persona');if(identity){identity.innerHTML='<option value="">按已有身份绑定</option>'+(db.myPersonaPresets||[]).map(p=>`<option value="${esc(p.id)}">${esc(p.name||'未命名身份')}</option>`).join('');identity.value=ensure().characterPersonaIds[character.id]||'';}
         controls?.renderActorSettings(actorId);
@@ -544,6 +546,7 @@
         s.preferences=local;
         const identity=el('setting-moments-user-persona');if(identity){if(identity.value)ensure().characterPersonaIds[character.id]=identity.value;else delete ensure().characterPersonaIds[character.id];void persist();}
         if(el('setting-moments-show-activity-narration'))s.showActivityNarration=el('setting-moments-show-activity-narration').checked;
+        if(el('setting-moments-background-post-enabled'))s.backgroundPostEnabled=el('setting-moments-background-post-enabled').checked;
         for(const [id,key] of [['setting-moments-nickname-awareness','nicknameAwareness'],['setting-moments-self-rename','selfRename'],['setting-moments-image-mode','imageMode'],['setting-moments-voice-mode','voiceMode']])if(el(id))s[key]=el(id).value;
         characterSettings(character);
         if(priorNarration!==s.showActivityNarration&&typeof currentChatId!=='undefined'&&currentChatId===character.id&&typeof renderMessages==='function')renderMessages();
@@ -1116,7 +1119,8 @@
         const validMentions = mentions.filter(actorId => actorId !== authorId && visibleTo(post, actorId) && person(actorId) && mentionLabel(cleanText, actorId, authorId));
         const comment = { id: id('comment'), authorId, ...(authorId === 'user' ? { authorPersonaId: post.userInteractionPersonaId || profilePersonaForPost(post), authorSnapshot: { name: userIdentity(post.userInteractionPersonaId || profilePersonaForPost(post)).name, avatar: userIdentity(post.userInteractionPersonaId || profilePersonaForPost(post)).avatar } } : {}), text: cleanText, replyTo, mentions: validMentions, mentionLabels: Object.fromEntries(validMentions.map(actorId => [actorId, mentionLabel(cleanText, actorId, authorId)])), createdAt: Date.now() };
         if (sticker) comment.sticker = sticker;
-        if (task) { comment.generationTaskId = task.id; comment.generationRound = task.round || 1; comment.discussionGeneration = task.discussionGeneration || 0; comment.discussionId = task.rootId || controls?.root(post, post.comments?.find(c => c.id === replyTo)); }
+        if (controls && authorId !== 'user') Object.assign(comment, controls.commentMetadata(post,replyTo,task));
+        else if (task) { comment.generationTaskId = task.id; comment.generationRound = task.round || 0; comment.discussionGeneration = task.discussionGeneration || 0; comment.discussionId = task.rootId || ''; }
         if (!Array.isArray(post.comments)) post.comments = [];
         post.comments.push(comment);
         if (task) task.pendingComments = (task.pendingComments || 0) + 1;
@@ -1248,7 +1252,7 @@
         const config = apiConfig(actorId);
         if (!(typeof isApiConfigReady === 'function' ? isApiConfigReady(config) : config?.url && config?.model && config?.key)) throw new Error('请先配置动态可用的 API');
         let url = String(config.url).replace(/\/+$/, '');
-        if(actorId){const post=task?.postId?findPost(task.postId):null;const user=userIdentity(interactionPersonaId(actorId,post));prompt=(interactionContextFor(actorId,post)+'\n'+prompt).replace(/\{\{user\}\}/gi,user.baseName||user.name).replace(/\{\{char\}\}/gi,person(actorId)?.character?.realName||person(actorId)?.name||'角色');}
+        if(actorId){const post=task?.postId?findPost(task.postId):null;const user=userIdentity(interactionPersonaId(actorId,post));prompt=(interactionContextFor(actorId,post)+'\n'+prompt+'\n'+(controls?.discussionPrompt(actorId,task)||'')).replace(/\{\{user\}\}/gi,user.baseName||user.name).replace(/\{\{char\}\}/gi,person(actorId)?.character?.realName||person(actorId)?.name||'角色');}
         const body = { model: config.model, messages: [{ role: 'user', content: prompt }], temperature: config.temperature ?? 0.85 };
         const requestOptions = controls?.requestOptions(actorId, task);
         let response, requestError;
@@ -1340,8 +1344,10 @@
     async function generatePost(actorId, kind = 'post', manual = false, feedback = null, task = null) {
         const actor = person(actorId);
         if (!actor || actorId === 'user') return false;
+        task ||= controls?.context(manual ? 'manual' : 'chat', [actorId]) || { source: manual ? 'manual' : 'chat' };
+        task.publicationKind = kind;
+        if (!publicationEnabled(actorId, kind, task.source)) { if (manual) toast('请先允许角色发布' + (kind === 'story' ? ' Story' : '动态')); return false; }
         if (controls) {
-            task ||= controls.context(manual ? 'manual' : 'chat', [actorId]);
             if (!controls.publicationAllowed(actorId, kind, task)) { if (manual) toast('当前设置暂停了调用或已达到发布限制'); return false; }
             if (!controls.settings(actorId).requests.postContent) { if (manual) toast('未允许额外生成动态正文'); return false; }
         }
@@ -1361,6 +1367,7 @@
         try { result = await askAI(prompt, actorId, task); }
         catch (error) { console.error('动态生成失败', error); if (feedback) feedback.error = error.message || '动态生成失败'; if (manual) toast(error.message || '动态生成失败'); if (task?.status === 'running') throw error; return false; }
         if (controls && !controls.publicationAllowed(actorId, kind, task)) return false;
+        if (!publicationEnabled(actorId, kind, task.source)) return false;
         const text = String(result.text || '').trim().slice(0, 500);
         if (!text) { if (feedback) feedback.error = 'API 没有生成动态内容'; if (manual) toast('API 没有生成动态内容'); return false; }
         const settings = mediaSettingsFor(actorId);
@@ -2218,12 +2225,34 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         const character = findCharacter(charActor(charId));
         return !character || characterSettings(character).chatLinked !== false;
     }
-    function promptForCharacter(charId) {
+    function publicationEnabled(actorId, kind, source = 'chat') {
+        if (controls) return controls.publicationEnabled(actorId, kind, source);
+        const character = findCharacter(actorId);
+        const contact = ensure().contacts.find(c => c.actorId === actorId && c.kind === 'npc');
+        const owner = character || (db.characters || []).find(c => c.id === contact?.ownerCharId);
+        const enabled = character ? characterSettings(character)[kind === 'story' ? 'storyEnabled' : 'postEnabled'] : contact?.[kind === 'story' ? 'mayStory' : 'mayPost'] === true;
+        return enabled && (source !== 'background' || !!owner?.autoReply?.enabled && owner.momentsSettings?.backgroundPostEnabled !== false);
+    }
+    async function chatEvent(character, isBackground = false, requestId = '') {
+        if (!controls || !character || !characterSettings(character).contactsEnabled || isBackground && !character.autoReply?.enabled) return;
+        const source = isBackground ? 'background' : 'chat', ownerActorId = charActor(character.id);
+        const eventId = requestId || id('moments_chat');
+        for (const contact of activeContactsFor(character.id).filter(c => c.kind === 'npc')) {
+            if (!controls.allowed(contact.actorId, source)) continue;
+            const task = { ...controls.context(source, [contact.actorId]), ownerActorId, type: 'activity', dueAt: Date.now(), key: 'chat-activity:' + eventId + ':' + contact.actorId };
+            await controls.enqueue(task);
+        }
+        await controls.tick();
+    }
+    function promptForCharacter(charId, isBackground = false) {
         const actorId = charActor(charId);
         const m = ensure();
         const character = findCharacter(actorId);
         const settings = character && characterSettings(character);
         if (!settings || settings.chatLinked === false) return '';
+        const source = isBackground ? 'background' : 'chat';
+        settings.postEnabled = publicationEnabled(actorId, 'post', source);
+        settings.storyEnabled = publicationEnabled(actorId, 'story', source);
         const activity = activityContext(actorId);
         const ownSignature = character.momentsProfile?.signature || '';
         const knownUserId = knownPersonaId(actorId);
@@ -2243,7 +2272,9 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         const capabilities = profileContext ? [profileContext] : [];
         if (controls) {
             const c = controls.settings(actorId);
-            capabilities.push(`用户设置的动态规则：普通聊天中${c.triggers.chat ? '允许' : '禁止'}动态指令；后台主动消息中${c.triggers.background ? '允许' : '禁止'}动态指令。当前允许动作：${Object.keys(c.actions).filter(k => c.actions[k]).join('、') || '无'}。${c.requests.postContent ? '' : '禁止额外生成动态正文，不要输出发帖指令。'}${c.publish.habit ? '发布习惯：' + c.publish.habit : ''}是否行动由你判断，可以完全不行动，不要求凑发布数量。不要对同一评论重复接话；重复参与仅在用户允许时执行。`);
+            c.actions.post = settings.postEnabled; c.actions.story = settings.storyEnabled;
+            capabilities.push(controls.discussionPrompt(actorId));
+            capabilities.push(`用户设置的动态规则：当前允许动作：${Object.keys(c.actions).filter(k => c.actions[k]).join('、') || '无'}。${c.requests.postContent ? '' : '禁止额外生成动态正文，不要输出发帖指令。'}${c.publish.habit ? '发布习惯：' + c.publish.habit : ''}是否行动由你判断，可以完全不行动，不要求凑发布数量。不要对同一评论重复接话；重复参与仅在用户允许时执行。`);
         }
         if (settings.postEnabled) capabilities.push(promptRule('post'));
         if (posts.some(post => post.authorId === actorId)) capabilities.push('你可自主删除自己发布的动态：[MOMENT:delete:动态ID]。只能删除自己的帖子，完成后你会记得此事。');
@@ -2289,7 +2320,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         if (!commands.length || !character) return { cleaned, errors: [] };
         const actorId = charActor(character.id);
         if (controls && !controls.chatAllowed(actorId, isBackground)) return { cleaned, errors: ['当前设置未允许此类聊天中的动态操作'] };
-        const task = controls?.context(isBackground ? 'background' : 'chat', [actorId]);
+        const task = controls?.context(isBackground ? 'background' : 'chat', [actorId]) || { source: isBackground ? 'background' : 'chat' };
         const settings = characterSettings(character);
         const errors = [];
         for (const command of commands) {
@@ -2299,6 +2330,7 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
             const parts = String(command[2] || '').split(':');
             try {
                 if (type === 'post' || type === 'story') {
+                    if (!publicationEnabled(actorId, type, task.source)) { errors.push('当前设置不允许发布' + (type === 'story' ? ' Story' : '动态')); continue; }
                     if (!settings[type === 'post' ? 'postEnabled' : 'storyEnabled'] || !await generatePost(actorId, type, false, null, task)) errors.push(`${type} 发布失败`);
                 } else if (type === 'rename') {
                     const result = await changeNickname(actorId, '', String(command[2] || ''), true);
@@ -2730,5 +2762,5 @@ ${batch.options.worldReference ? '可参考以下世界书，不得违背：\n' 
         });
     }
     function open() { if (!state.initialized) init(); renderFeed(); switchScreen('moments-screen'); }
-    window.Moments = { init, open, loadCharacterSettings, saveCharacterSettings, isChatLinked, promptForCharacter, prepareForChat, consumeAiCommands, generatePost, promptDefaults, visibleTo, canSeeInteraction };
+    window.Moments = { init, open, loadCharacterSettings, saveCharacterSettings, isChatLinked, promptForCharacter, prepareForChat, consumeAiCommands, generatePost, chatEvent, promptDefaults, visibleTo, canSeeInteraction };
 })();

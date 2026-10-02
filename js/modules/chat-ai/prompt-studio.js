@@ -316,7 +316,7 @@
             '回复条数规则': replyRule,
             '自主收藏规则': autoFavorite,
             '用户收藏内容': buildUserFavorites(character),
-            '动态能力与已看内容': window.Moments?.promptForCharacter(character.id) || ''
+            '动态能力与已看内容': window.Moments?.promptForCharacter(character.id, !!opts.isBackground) || ''
         };
     }
 

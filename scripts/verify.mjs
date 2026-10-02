@@ -212,6 +212,8 @@ function omitMomentsControls(node) {
         const id = child.attrs?.find(a => a.name === 'id')?.value;
         if (id === 'moments-controls-screen') return false;
         const classes = child.attrs?.find(a => a.name === 'class')?.value.split(/\s+/) || [];
+        if (classes.includes('kkt-item') && findNodeById(child, 'setting-moments-background-post-enabled')) return false;
+        if (id === 'setting-moments-background-post-hint') return false;
         if (classes.includes('kkt-item') && findNodeById(child, 'setting-moments-controls-btn')) return false;
         if (classes.includes('moments-inline-actions') && findNodeById(child, 'moments-controls-btn')) return false;
         if (child.tagName === 'p' && child.parentNode && findNodeById(child.parentNode, 'moments-generate-now-btn')) {
@@ -282,6 +284,15 @@ function omitTtsAdditions(node) {
     });
 }
 omitTtsAdditions(findNodeById(protectedDocument, 'api-pane-tts'));
+// Restore only the authorized Pomodoro roots; the release hash still protects all other UI.
+const pomodoroLayoutBaseline = JSON.parse(read('scripts/fixtures/pomodoro-layout-before.json'));
+for (const [id, markup] of Object.entries(pomodoroLayoutBaseline)) {
+    const node = findNodeById(protectedDocument, id);
+    if (!node) fail('Missing preserved Pomodoro root: ' + id);
+    else restoreMomentsNode(node, markup);
+}
+const pomodoroHistoryNode = findNodeById(protectedDocument, 'pomodoro-history-modal');
+if (pomodoroHistoryNode?.parentNode) pomodoroHistoryNode.parentNode.childNodes = pomodoroHistoryNode.parentNode.childNodes.filter(node => node !== pomodoroHistoryNode);
 const actualDomSignature = getNonScriptDomSignature(protectedDocument);
 if (actualDomSignature !== protectedDomSignature && actualDomSignature !== preexistingWorkspaceDomSignature) {
     fail(`Assembled non-script DOM differs from the protected release structure: ${actualDomSignature}`);
@@ -289,9 +300,9 @@ if (actualDomSignature !== protectedDomSignature && actualDomSignature !== preex
 const textualIds = [...logicalHtml.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map(match => match[1]);
 const duplicateIds = [...new Set(textualIds.filter((id, index) => textualIds.indexOf(id) !== index))];
 const momentsRedesignIdDelta = 8;
-const momentsChatLinkIds = ['setting-moments-chat-linked', 'setting-moments-chat-link-hint'];
+const momentsChatLinkIds = ['setting-moments-chat-linked', 'setting-moments-chat-link-hint', 'setting-moments-background-post-enabled', 'setting-moments-background-post-hint'];
 for (const id of momentsChatLinkIds) if (!textualIds.includes(id)) fail(`Missing moments chat linkage ID: ${id}`);
-if (textualIds.length !== 2636 + novelAiAdditionIds.length + statusStorageAdditionIds.length + momentsRedesignIdDelta + momentsChatLinkIds.length + ttsAdditionIds.length) fail(`Unexpected assembled ID count after authorized additions: ${textualIds.length}`);
+if (textualIds.length !== 2636 + novelAiAdditionIds.length + statusStorageAdditionIds.length + momentsRedesignIdDelta + momentsChatLinkIds.length + ttsAdditionIds.length + 35) fail(`Unexpected assembled ID count after authorized additions: ${textualIds.length}`);
 if (duplicateIds.length) fail(`Duplicate assembled IDs: ${duplicateIds.join(', ')}`);
 
 const requiredIds = [

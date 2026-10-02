@@ -179,7 +179,7 @@ function generatePrivateSystemPrompt(character, opts) {
             template += '\n' + opts.historyText;
         }
 
-        if (!momentsInTemplate && window.Moments) template += window.Moments.promptForCharacter(character.id);
+        if (!momentsInTemplate && window.Moments) template += window.Moments.promptForCharacter(character.id, !!opts.isBackground);
         return template;
     }
 
@@ -422,7 +422,7 @@ function generatePrivateSystemPrompt(character, opts) {
             nodePrompt += '\n' + opts.historyText;
         }
 
-        if (window.Moments) nodePrompt += window.Moments.promptForCharacter(character.id);
+        if (window.Moments) nodePrompt += window.Moments.promptForCharacter(character.id, !!opts.isBackground);
         return nodePrompt;
     }
 
@@ -920,7 +920,7 @@ function generatePrivateSystemPrompt(character, opts) {
         prompt += '\n' + opts.historyText;
     }
 
-    if (window.Moments) prompt += window.Moments.promptForCharacter(character.id);
+    if (window.Moments) prompt += window.Moments.promptForCharacter(character.id, !!opts.isBackground);
     return prompt;
 }
 
