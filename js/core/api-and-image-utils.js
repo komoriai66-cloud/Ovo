@@ -278,6 +278,11 @@ function openImageViewer(src, msgId = null) {
             // 去掉 {{ }} 包装以便于编辑
             const tagMatch = originalPrompt.match(/\{\{([\s\S]+?)\}\}/);
             if (tagMatch) originalPrompt = tagMatch[1].trim();
+            const subjectMarkers = originalPrompt.match(/\bovo_subject_(?:self|other)\b/gi) || [];
+            if (window.OvoFaceLock) originalPrompt = window.OvoFaceLock.parsePrompt(originalPrompt).prompt;
+            const referenceNote = document.getElementById('edit-image-face-lock-note');
+            const referenceCharacter = window.OvoFaceLock?.messageCharacter(chatObj, currentChatType, msgObj);
+            if (referenceNote) referenceNote.hidden = !(referenceCharacter?.imageFaceLock?.enabled && subjectMarkers.length && subjectMarkers.every(value => value.toLowerCase() === 'ovo_subject_self'));
 
             textarea.value = originalPrompt;
             editModal.classList.add('visible');
@@ -294,14 +299,15 @@ function openImageViewer(src, msgId = null) {
                     if (typeof showToast === 'function') showToast('提示词不能为空');
                     return;
                 }
+                const markedPrompt = [newPrompt, ...subjectMarkers].join(', ');
 
                 // 更新消息内容，保留消息包装格式
                 if (pvMatch) {
-                    msgObj.content = msgObj.content.replace(pvMatch[1], `{{${newPrompt}}}`);
+                    msgObj.content = msgObj.content.replace(pvMatch[1], `{{${markedPrompt}}}`);
                 } else {
                     // 如果由于某种原因正则没有匹配上，直接替换整个内容，并加上照片包装
                     const senderName = msgObj.role === 'assistant' ? (chatObj.remarkName || chatObj.name || 'AI') : '你';
-                    msgObj.content = `[${senderName}发来的照片/视频：{{${newPrompt}}}]`;
+                    msgObj.content = `[${senderName}发来的照片/视频：{{${markedPrompt}}}]`;
                 }
 
                 if (typeof saveData === 'function') saveData();
@@ -341,11 +347,13 @@ function openImageViewer(src, msgId = null) {
 
                 const tagMatch = promptRaw.match(/\{\{([\s\S]+?)\}\}/);
                 if (tagMatch) finalPrompt = tagMatch[1].trim();
+                if (window.OvoFaceLock) finalPrompt = window.OvoFaceLock.parsePrompt(finalPrompt).prompt;
 
                 let logText = `引擎: ${engine.toUpperCase()}\n状态: 成功`;
                 if (activeMeta?.model) logText += `\n模型: ${activeMeta.model}`;
                 if (activeMeta?.size) logText += `\n尺寸/比例: ${activeMeta.size}`;
                 if (activeMeta?.seed != null) logText += `\nSeed: ${activeMeta.seed}`;
+                if (activeMeta?.faceLock) logText += '\n人物参考: 已使用角色参考';
                 if (activeMeta?.vibeGroup) logText += `\nVIBE 组: ${activeMeta.vibeGroup}（${activeMeta.vibeCount || 0} 个）`;
                 if (activeMeta?.correlationId) logText += `\n请求 ID: ${activeMeta.correlationId}`;
                 logText += `\n\n[提取的提示词]\n${finalPrompt}`;
@@ -959,7 +967,7 @@ async function _image_extractFromJson(data) {
 function _imageJoinUrl(base, path) {
     const value = String(base || '').trim();
     if (!value) return '';
-    if (/\/(?:images\/generations|generateContent|generate\/core|generate\/ultra)(?:\?|$)/i.test(value)) return value;
+    if (/\/(?:images\/(?:generations|edits)|generateContent|generate\/core|generate\/ultra)(?:\?|$)/i.test(value)) return value;
     if (value.replace(/\/$/, '').endsWith('/v1') && path.startsWith('/v1/')) return value.replace(/\/$/, '') + path.slice(3);
     return value.replace(/\/$/, '') + path;
 }
@@ -1013,7 +1021,7 @@ async function _imageReadError(response, providerName) {
  * @returns {Promise<{imageUrl: string}>} - 返回图片 URL 或 DataURL
  */
 async function generateGptImage(prompt, overrideSettings = {}, signal = null) {
-    const settings = Object.assign({}, db.gptImageSettings || {}, overrideSettings);
+    const settings = overrideSettings._hasCharacterContext ? Object.assign({}, overrideSettings) : Object.assign({}, db.gptImageSettings || {}, overrideSettings);
     const url = settings.url;
     const key = settings.key;
     if (!url) throw new Error('GPT生图 API URL 未配置');
@@ -1021,21 +1029,29 @@ async function generateGptImage(prompt, overrideSettings = {}, signal = null) {
     if (!prompt || !prompt.trim()) throw new Error('提示词不能为空');
 
     const model = settings.model || 'dall-e-3';
+    const faceReference = settings._faceLock ? await window.OvoFaceLock.reference(settings, 'gpt', signal) : null;
     
     // 优先读取角色覆盖尺寸
     let finalSize = settings.size;
-    if (typeof currentChatId !== 'undefined' && typeof currentChatType !== 'undefined' && currentChatType === 'private') {
-        const charObj = typeof db !== 'undefined' && db.characters ? db.characters.find(c => c.id === currentChatId) : null;
+    if (settings._hasCharacterContext || (typeof currentChatId !== 'undefined' && typeof currentChatType !== 'undefined' && currentChatType === 'private')) {
+        const charObj = settings._hasCharacterContext ? settings._character : (typeof db !== 'undefined' && db.characters ? db.characters.find(c => c.id === currentChatId) : null);
         if (charObj && charObj.gptImageSizeOverride && charObj.gptImageSizeOverride.trim() !== '') {
             finalSize = charObj.gptImageSizeOverride;
         }
     }
     
     let defaultSize = '512x512';
-    if (db.gptImageSettings && Object.keys(db.gptImageSettings).length > 0 && !db.gptImageSettings.size) {
+    const sizeDefaults = settings._hasCharacterContext ? settings : db.gptImageSettings;
+    if (sizeDefaults && Object.keys(sizeDefaults).length > 0 && !sizeDefaults.size) {
         defaultSize = '1024x1024';
     }
-    const size = finalSize || defaultSize;
+    let size = finalSize || defaultSize;
+    if (faceReference) {
+        const dimensions = String(size).match(/^(\d+)x(\d+)$/);
+        if (/^gpt-image-1/.test(model)) {
+            if (!['auto', '1024x1024', '1024x1536', '1536x1024'].includes(size)) size = 'auto';
+        } else if (size !== 'auto' && (!dimensions || Number(dimensions[1]) * Number(dimensions[2]) < 655360)) size = 'auto';
+    }
     const systemPrompt = settings.systemPrompt || '';
     const negativePrompt = settings.negativePrompt || '';
 
@@ -1043,8 +1059,8 @@ async function generateGptImage(prompt, overrideSettings = {}, signal = null) {
     const promptParts = [];
     if (systemPrompt) promptParts.push(systemPrompt);
     
-    if (typeof currentChatId !== 'undefined' && typeof currentChatType !== 'undefined' && currentChatType === 'private') {
-        const charObj = typeof db !== 'undefined' && db.characters ? db.characters.find(c => c.id === currentChatId) : null;
+    if (settings._hasCharacterContext || (typeof currentChatId !== 'undefined' && typeof currentChatType !== 'undefined' && currentChatType === 'private')) {
+        const charObj = settings._hasCharacterContext ? settings._character : (typeof db !== 'undefined' && db.characters ? db.characters.find(c => c.id === currentChatId) : null);
         if (charObj && charObj.gptArtistPrompt) {
             promptParts.push(charObj.gptArtistPrompt);
         }
@@ -1055,24 +1071,32 @@ async function generateGptImage(prompt, overrideSettings = {}, signal = null) {
     const merged = _imageMergePrompt(promptParts.filter(Boolean).join(', '), 'gpt', '', negativePrompt);
     let finalPrompt = merged.prompt;
     if (merged.negativePrompt) finalPrompt = `${finalPrompt} --no ${merged.negativePrompt}`;
+    if (faceReference) finalPrompt += '\n使用参考图中的同一个人，保持主要面部特征与人物身份。服装、表情、动作、背景和构图按上述描述生成，不照搬参考图的场景。';
 
-    const endpoint = _imageJoinUrl(url, '/v1/images/generations');
+    const endpoint = faceReference && /\/images\/generations(?:\?|$)/i.test(url)
+        ? url.replace(/\/images\/generations(?=\?|$)/i, '/images/edits')
+        : _imageJoinUrl(url, faceReference ? '/v1/images/edits' : '/v1/images/generations');
+    const headers = { Authorization: `Bearer ${key.trim()}` };
+    let body;
+    if (faceReference) {
+        body = new FormData();
+        body.append('model', model);
+        body.append('prompt', finalPrompt);
+        body.append('n', '1');
+        body.append('size', size);
+        body.append('image', _image_base64ToBlob(faceReference.data, faceReference.mimeType), 'character-reference.' + (faceReference.mimeType === 'image/jpeg' ? 'jpg' : faceReference.mimeType.split('/')[1]));
+        if (/^gpt-image-1(?:\.5)?$/.test(model)) body.append('input_fidelity', 'high');
+    } else {
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify({ model, prompt: finalPrompt, n: 1, size, response_format: 'b64_json' });
+    }
 
     console.log('[GPT Image] 发送生图请求:', { endpoint, model, size, prompt: finalPrompt });
 
     const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${key.trim()}`
-        },
-        body: JSON.stringify({
-            model: model,
-            prompt: finalPrompt,
-            n: 1,
-            size: size,
-            response_format: 'b64_json'
-        }),
+        headers,
+        body,
         signal: signal
     });
 
@@ -1088,7 +1112,7 @@ async function generateGptImage(prompt, overrideSettings = {}, signal = null) {
     }
 
     console.log('[GPT Image] ✅ 生图成功');
-    return { imageUrl, provider: 'gpt', model, size, atmosphere: merged.atmosphere };
+    return { imageUrl, provider: 'gpt', model, size, atmosphere: merged.atmosphere, faceLock: faceReference ? { characterId: faceReference.characterId } : null };
 }
 
 /**
@@ -1097,7 +1121,14 @@ async function generateGptImage(prompt, overrideSettings = {}, signal = null) {
  * @param {string} prompt - 提示词
  * @returns {Promise<{imageUrl: string}>} - 返回生成的图片 DataURL/URL
  */
-async function generateImageDispatch(prompt, signal = null) {
+async function generateImageDispatch(prompt, signal = null, context = null) {
+    if (context) {
+        const generators = { gpt: generateGptImage, novelai: generateNovelAiImage, google: generateGoogleImage, stability: generateStabilityImage };
+        const generator = generators[context.provider];
+        if (!generator) throw new Error('未开启任何生图引擎，请先在 API 设置中启用一个生图平台');
+        if (context.settings._faceLock && !window.OvoFaceLock.supported(context.provider, context.settings)) throw new Error('当前生图模型不支持锁脸，请选择支持人物参考的模型，或关闭该角色的生图锁脸');
+        return generator(prompt, context.settings, signal);
+    }
     const enabled = {
         gpt: !!db.gptImageSettings?.enabled,
         novelai: !!db.novelAiSettings?.enabled,
@@ -1120,7 +1151,7 @@ async function generateImageDispatch(prompt, signal = null) {
  * @returns {Promise<{imageUrl: string}>} - 返回图片 DataURL
  */
 async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null) {
-    const settings = Object.assign({}, db.novelAiSettings || {}, overrideSettings);
+    const settings = overrideSettings._hasCharacterContext ? Object.assign({}, overrideSettings) : Object.assign({}, db.novelAiSettings || {}, overrideSettings);
     const token = settings.token;
     const authMode = settings.authMode || 'bearer';
     if (!token && authMode !== 'none') throw new Error('NovelAI Token 未配置');
@@ -1166,13 +1197,16 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
     const isV4 = modelFamily === 'v4';
     const isV5 = modelFamily === 'v5';
     const isModern = isV4 || isV5;
+    const faceReference = settings._faceLock ? await window.OvoFaceLock.reference(settings, 'novelai', signal) : null;
     const configuredSeed = settings.seed === '' || settings.seed == null ? null : Number(settings.seed);
     if (configuredSeed !== null && (!Number.isInteger(configuredSeed) || configuredSeed < 0 || configuredSeed > 4294967295)) throw new Error('Seed 必须是 0 到 4294967295 的整数，或留空随机');
     const commonSeed = Number.isFinite(configuredSeed) ? Math.max(0, Math.trunc(configuredSeed)) : Math.floor(Math.random() * 0x100000000);
-    const vibe = window.NovelAiVibe?.resolveForGeneration
+    const vibe = !faceReference && window.NovelAiVibe?.resolveForGeneration
         ? await window.NovelAiVibe.resolveForGeneration(model, settings, signal)
         : { images: [], information: [], strengths: [], groupName: '' };
-    const precise = window.NovelAiVibe?.resolvePreciseReferences
+    const precise = faceReference
+        ? { images: [await compat.fitImage(faceReference.dataUrl, undefined, undefined, 'black', signal)], strengths: [0.8], fidelity: [1], descriptions: ['character'] }
+        : window.NovelAiVibe?.resolvePreciseReferences
         ? await window.NovelAiVibe.resolvePreciseReferences(model, settings, signal)
         : { images: [], strengths: [], fidelity: [], descriptions: [] };
     const noiseSchedule = isV5 ? 'karras' : (settings.noiseSchedule || (isModern ? 'karras' : 'native'));
@@ -1423,6 +1457,7 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
     return {
         imageUrl: imageDataUrl, originalImageUrl: imageDataUrl, images: imageResults.length ? imageResults : [{ imageUrl: imageDataUrl, seed: commonSeed, index: 0 }], provider: 'novelai', model: requestBody.model,
         size: resolution, seed: imageResults[0]?.seed ?? commonSeed, vibeGroup: vibe.groupName || '', vibeCount: vibe.images.length,
+        faceLock: faceReference ? { characterId: faceReference.characterId } : null,
         mimeType: /^data:([^;,]+)/.exec(imageDataUrl)?.[1] || '', correlationId,
         requestSnapshot: {
             input: requestBody.input, model: requestBody.model, action: requestBody.action,
@@ -1437,26 +1472,30 @@ async function generateNovelAiImage(prompt, overrideSettings = {}, signal = null
 
 /** 使用 Google Gemini 原生图片模型生成图片。 */
 async function generateGoogleImage(prompt, overrideSettings = {}, signal = null) {
-    const settings = Object.assign({}, db.googleImageSettings || {}, overrideSettings);
+    const settings = overrideSettings._hasCharacterContext ? Object.assign({}, overrideSettings) : Object.assign({}, db.googleImageSettings || {}, overrideSettings);
     const key = String(settings.key || '').trim();
     const baseUrl = String(settings.url || 'https://generativelanguage.googleapis.com').trim();
     const model = settings.model || 'gemini-3.1-flash-image';
     if (!key) throw new Error('Google 生图 API Key 未配置');
     if (!prompt || !prompt.trim()) throw new Error('提示词不能为空');
+    const faceReference = settings._faceLock ? await window.OvoFaceLock.reference(settings, 'google', signal) : null;
 
     const merged = _imageMergePrompt(prompt.trim(), 'google', settings.systemPrompt || '', settings.negativePrompt || '');
     let finalPrompt = merged.prompt;
     if (merged.negativePrompt) finalPrompt += `\n\n画面中不要出现：${merged.negativePrompt}`;
+    if (faceReference) finalPrompt += '\n参考图只用于人物身份：保持同一个人的主要面部特征。服装、表情、动作、背景和构图按上述描述生成，不照搬参考图的场景。';
     const endpoint = /:generateContent(?:\?|$)/.test(baseUrl)
         ? baseUrl
         : `${baseUrl.replace(/\/$/, '')}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const generationConfig = { responseModalities: ['TEXT', 'IMAGE'] };
     if (settings.aspectRatio) generationConfig.imageConfig = { aspectRatio: settings.aspectRatio };
 
+    const inputParts = [{ text: finalPrompt }];
+    if (faceReference) inputParts.push({ inlineData: { mimeType: faceReference.mimeType, data: faceReference.data } });
     const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: finalPrompt }] }], generationConfig }),
+        body: JSON.stringify({ contents: [{ role: 'user', parts: inputParts }], generationConfig }),
         signal
     });
     if (!response.ok) throw await _imageReadError(response, 'Google 生图');
@@ -1471,13 +1510,15 @@ async function generateGoogleImage(prompt, overrideSettings = {}, signal = null)
     const mimeType = inline.mimeType || inline.mime_type || 'image/png';
     return {
         imageUrl: `data:${mimeType};base64,${inline.data}`,
-        provider: 'google', model, size: settings.aspectRatio || '', atmosphere: merged.atmosphere
+        provider: 'google', model, size: settings.aspectRatio || '', atmosphere: merged.atmosphere,
+        faceLock: faceReference ? { characterId: faceReference.characterId } : null
     };
 }
 
 /** 使用 Stability Stable Image 接口生成图片。 */
 async function generateStabilityImage(prompt, overrideSettings = {}, signal = null) {
-    const settings = Object.assign({}, db.stabilityImageSettings || {}, overrideSettings);
+    const settings = overrideSettings._hasCharacterContext ? Object.assign({}, overrideSettings) : Object.assign({}, db.stabilityImageSettings || {}, overrideSettings);
+    if (settings._faceLock) throw new Error('当前 Stability 生图接口不支持锁脸，请选择支持人物参考的生图服务，或关闭该角色的生图锁脸');
     const key = String(settings.key || '').trim();
     const baseUrl = String(settings.url || 'https://api.stability.ai').trim();
     const service = settings.service === 'ultra' ? 'ultra' : 'core';

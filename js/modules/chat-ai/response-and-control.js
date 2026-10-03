@@ -830,7 +830,7 @@ async function handleAiReplyContent(fullResponse, chat, targetChatId, targetChat
             addMessageBubble(summaryMsg, targetChatId, targetChatType);
         }
 
-        await saveReplyTargetChat();
+        if (await saveReplyTargetChat() === false) return false;
         if (window.WalletSystem && typeof window.WalletSystem.persist === 'function') {
             await window.WalletSystem.persist([targetChatId]);
         }

@@ -367,6 +367,7 @@ function collapseStickerPartsForAI(parts) {
 }
 
 async function getAiReply(chatId, chatType, isBackground = false, isSummary = false, isCharBlockedMonologue = false, isPhoneControlRevokeAttempt = false, replyOptions = {}) {
+    if (isBackground && window.StorageSaveHealth?.canRunBackground() === false) return false;
     if (window.StatusStorage?.isChatLocked(chatType, chatId)) {
         if (!isBackground) showToast('此会话正在整理状态栏数据，请在操作完成后再调用');
         return;
@@ -483,9 +484,11 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         replyTotalTimer = null;
     };
     const persistTargetChat = async () => {
-        if (chatType === 'group' && typeof saveGroup === 'function') return saveGroup(chatId);
-        if (chatType === 'private' && typeof saveCharacter === 'function') return saveCharacter(chatId);
-        if (typeof saveCurrentChat === 'function' && currentChatId === chatId && currentChatType === chatType) return saveCurrentChat();
+        let saved;
+        if (chatType === 'group' && typeof saveGroup === 'function') saved = await saveGroup(chatId);
+        else if (chatType === 'private' && typeof saveCharacter === 'function') saved = await saveCharacter(chatId);
+        else if (typeof saveCurrentChat === 'function' && currentChatId === chatId && currentChatType === chatType) saved = await saveCurrentChat();
+        if (saved === false) throw Object.assign(new Error('回复已显示，但尚未保存到本机。请先导出备份，再重试保存。'), { name: 'StorageWriteError' });
     };
     const finalizeReply = async (fullResponse) => {
         if (requestAbortController && requestAbortController.signal.aborted) {
@@ -521,18 +524,19 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
             return;
         }
         const historyLengthBefore = Array.isArray(chat.history) ? chat.history.length : 0;
-        await handleAiReplyContent(fullResponse, chat, chatId, chatType, isBackground, isCharBlockedMonologue, replyOptions);
+        if (await handleAiReplyContent(fullResponse, chat, chatId, chatType, isBackground, isCharBlockedMonologue, replyOptions) === false) {
+            throw Object.assign(new Error('回复已显示，但尚未保存到本机。请先导出备份，再重试保存。'), { name: 'StorageWriteError' });
+        }
         if (apiConfig._roleBinding && Array.isArray(chat.history)) {
             chat.history.slice(historyLengthBefore).forEach(message => { message.apiUsage = { ...window.RoleApiBindings.describe(apiConfig), elapsedMs: Date.now() - apiStartedAt }; });
-            await persistTargetChat();
         }
         if (replyTask && Array.isArray(chat.history)) {
             chat.history.slice(historyLengthBefore).forEach(message => {
                 if (message && !message.replyRequestId) message.replyRequestId = replyTask.id;
             });
-            await persistTargetChat();
-            await window.ReplyResilience.complete(replyTask);
         }
+        if (apiConfig._roleBinding || replyTask) await persistTargetChat();
+        if (replyTask) await window.ReplyResilience.complete(replyTask);
         if (!isBackground && !isSummary && chatType === 'private' && window.FollowUpReply) {
             try {
                 await window.FollowUpReply.scheduleAfterReply(chatId, chat.history.slice(historyLengthBefore));
@@ -1169,6 +1173,9 @@ async function getAiReply(chatId, chatType, isBackground = false, isSummary = fa
         }
         if (replyOptions.memberTask) {
             // Group orchestration owns per-member feedback and foreground controls.
+        } else if (error.name === 'StorageWriteError') {
+            // 保存入口已统一提示；保留恢复任务和页面回复，避免再弹 API 错误。
+            console.error('Reply persistence failed:', error);
         } else if (error.name === 'AbortError') {
             if (!isBackground && typeof showToast === 'function') showToast('已暂停调用');
         } else if (error.name === 'TimeoutError') {

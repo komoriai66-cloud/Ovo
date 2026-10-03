@@ -337,7 +337,7 @@
     }
 
     async function resolveForGeneration(model, generationSettings = {}, signal) {
-        const settings = state();
+        const settings = generationSettings._referenceSnapshot?.vibe || state();
         if (!settings.enabled || !settings.activeGroupId) return { images: [], information: [], strengths: [], groupName: '' };
         if (!supportsVibe(model)) throw new Error('当前 NovelAI 模型不支持 VIBE。V5 暂不支持，请切换到 V4/V4.5 或 V3，或关闭 VIBE。');
         const current = await group(settings.activeGroupId);
@@ -367,10 +367,11 @@
     }
 
     async function resolvePreciseReferences(model, generationSettings = {}, signal) {
-        const settings = preciseState();
+        const settings = generationSettings._referenceSnapshot?.precise || preciseState();
         const items = (settings.items || []).filter(item => item.enabled !== false);
         if (!settings.enabled || !items.length) return { images: [], strengths: [], fidelity: [], descriptions: [] };
-        if (state().enabled && state().activeGroupId) throw new Error('Precise Reference 与 VIBE 不能同时启用，请关闭其中一项。');
+        const vibeSettings = generationSettings._referenceSnapshot?.vibe || state();
+        if (vibeSettings.enabled && vibeSettings.activeGroupId) throw new Error('Precise Reference 与 VIBE 不能同时启用，请关闭其中一项。');
         if (!/nai-diffusion-4-5-(?:full|curated)/.test(String(model || ''))) throw new Error('Precise Reference 仅支持 NovelAI V4.5 Full / Curated。');
         const result = { images: [], strengths: [], fidelity: [], descriptions: [] };
         for (const item of items) {

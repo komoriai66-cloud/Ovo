@@ -199,6 +199,49 @@ function initDatabase() {
 // 防止大数据下多个全量 bulkPut 同时排队、重复结构化克隆整库。
 let saveDataPromise = null;
 let saveDataRequestedWhileRunning = false;
+let lastQuotaWarningAt = -Infinity;
+
+// 保存失败保留页面内容；只有真正的配额错误才提示容量不足。
+window.StorageSaveHealth = (() => {
+    const failures = new Map();
+    let lastNoticeAt = -Infinity;
+    const changed = () => {
+        if (typeof CustomEvent === 'function') window.dispatchEvent?.(new CustomEvent('ovo-storage-save-health', { detail: { failed: failures.size > 0 } }));
+    };
+    const isQuotaError = error => {
+        const pending = [error], seen = new Set();
+        while (pending.length) {
+            const item = pending.pop();
+            if (!item || typeof item !== 'object' || seen.has(item)) continue;
+            seen.add(item);
+            if (item.name === 'QuotaExceededError') return true;
+            pending.push(item.inner, item.cause, ...(Array.isArray(item.failures) ? item.failures : []), ...Object.values(item.failuresByPos || {}));
+        }
+        return false;
+    };
+    return {
+        isQuotaError,
+        report(error, scope) {
+            const now = Date.now();
+            failures.set(scope, now + 30000);
+            changed();
+            if (now - lastNoticeAt < 30000) return;
+            lastNoticeAt = now;
+            if (typeof showToast === 'function') showToast(isQuotaError(error)
+                ? '存储配额不足，保存未成功。请先导出备份，再整理数据并重试。'
+                : '本地数据保存失败，当前内容仍在页面中。请先导出备份，再重试保存。', 6000);
+        },
+        success(scope) {
+            failures.delete(scope);
+            if (!failures.size) lastNoticeAt = -Infinity;
+            changed();
+        },
+        hasFailures() { return failures.size > 0; },
+        canRunBackground() {
+            return ![...failures.values()].some(retryAt => Date.now() < retryAt);
+        }
+    };
+})();
 
 const performFullSave = async () => {
     // 存储配额预检
@@ -206,7 +249,8 @@ const performFullSave = async () => {
         try {
             const { usage, quota } = await navigator.storage.estimate();
             const pct = (usage / quota) * 100;
-            if (pct > 95) {
+            if (pct > 95 && Date.now() - lastQuotaWarningAt >= 30000) {
+                lastQuotaWarningAt = Date.now();
                 if (typeof showToast === 'function') {
                     showToast(`⚠️ 存储空间已使用 ${pct.toFixed(0)}%，请立即导出备份！`, 6000);
                 }
@@ -236,18 +280,14 @@ const performFullSave = async () => {
         }).filter(p => p);
         await Promise.all(settingsPromises);
         window.ChatTokenStats?.changed(null);
+        window.StorageSaveHealth.success('full');
+        window.StorageSaveHealth.success('settings');
+        (db.characters || []).forEach(chat => window.StorageSaveHealth.success('private:' + chat.id));
+        (db.groups || []).forEach(chat => window.StorageSaveHealth.success('group:' + chat.id));
         return true;
     } catch (e) {
         console.error("saveData failed:", e);
-        if (typeof showToast === 'function') {
-            // 根据错误类型给用户有意义的提示
-            const isQuota = e.name === 'QuotaExceededError'
-                || (e.message && (e.message.includes('quota') || e.message.includes('delete record')));
-            const msg = isQuota
-                ? '存储空间不足，保存失败！请到「存储管理」导出备份后清理数据。'
-                : '保存数据失败: ' + e.message;
-            showToast(msg, 6000);
-        }
+        window.StorageSaveHealth.report(e, 'full');
         return false;
     }
 };
@@ -262,7 +302,8 @@ const saveData = async () => {
         let saved = true;
         do {
             saveDataRequestedWhileRunning = false;
-            if (await performFullSave() === false) saved = false;
+            // 失败后停止本轮队列，后续显式保存仍可重试，避免持续写入时刷屏。
+            if (await performFullSave() === false) { saved = false; break; }
         } while (saveDataRequestedWhileRunning);
         return saved;
     })();
@@ -293,15 +334,16 @@ const saveSingleChatRecord = async (table, collection, id, queueMap, label) => {
             do {
                 state.requested = false;
                 const record = collection.find(item => item.id === id);
-                if (!record) return;
+                if (!record) return false;
                 if (window.StatusStorage) await window.StatusStorage.persistChats(table, [record]);
                 else await table.put(record);
             } while (state.requested);
             window.ChatTokenStats?.changed(id, table === dexieDB.groups ? 'group' : 'private');
+            window.StorageSaveHealth.success((table === dexieDB.groups ? 'group:' : 'private:') + id);
             return true;
         } catch (error) {
             console.error(`${label} failed:`, error);
-            if (typeof showToast === 'function') showToast('保存聊天数据失败: ' + error.message, 6000);
+            window.StorageSaveHealth.report(error, (table === dexieDB.groups ? 'group:' : 'private:') + id);
             return false;
         } finally {
             queueMap.delete(id);
@@ -337,10 +379,11 @@ const saveGlobalSettings = async (keys) => {
                 ? window.StatusStorage.persistSetting(db[key]) : dexieDB.globalSettings.put({ key, value: db[key] }));
         await Promise.all(promises);
         window.ChatTokenStats?.changed(null);
+        window.StorageSaveHealth.success('settings');
         return true;
     } catch (e) {
         console.error("saveGlobalSettings failed:", e);
-        if (typeof showToast === 'function') showToast("保存设置失败: " + e.message);
+        window.StorageSaveHealth.report(e, 'settings');
         return false;
     }
 };
@@ -349,47 +392,115 @@ window.saveCharacter = saveCharacter;
 window.saveGroup = saveGroup;
 window.saveGlobalSettings = saveGlobalSettings;
 
+// 只复制媒体字段所在的容器，原图字符串共享；长时间压缩不修改实时会话。
+// 保存前只合并实际改动，失败时只恢复本次改动，不覆盖期间新增的聊天或新图片。
+const chatMediaEditQueues = new Map();
+window.editChatMedia = (chat, type, edit) => {
+    const key = type + ':' + chat.id;
+    const operation = (chatMediaEditQueues.get(key) || Promise.resolve()).catch(() => {}).then(async () => {
+        const slots = [];
+        let currentMessages;
+        const capture = (source, draft, field, resolve) => {
+            slots.push({ source, draft, field, resolve, before: source[field], had: Object.hasOwn(source, field) });
+        };
+        const history = (chat.history || []).map(message => {
+            if (!message) return message;
+            const draft = { ...message };
+            const current = () => currentMessages.has(message) ? message : null;
+            capture(message, draft, 'content', current);
+            capture(message, draft, 'novelAiImageUrl', current);
+            if (message.imageGenerationMeta) {
+                draft.imageGenerationMeta = { ...message.imageGenerationMeta };
+                capture(message.imageGenerationMeta, draft.imageGenerationMeta, 'originalImageUrl', () => current()?.imageGenerationMeta);
+            }
+            if (Array.isArray(message.parts)) draft.parts = message.parts.map(part => {
+                if (!part || part.type !== 'image') return part;
+                const copy = { ...part };
+                capture(part, copy, 'data', () => current()?.parts?.includes(part) ? part : null);
+                return copy;
+            });
+            if (Array.isArray(message._imageVersions)) draft._imageVersions = message._imageVersions.map(version => {
+                if (!version) return version;
+                const copy = { ...version };
+                const currentVersion = () => current()?._imageVersions?.includes(version) ? version : null;
+                capture(version, copy, 'imageUrl', currentVersion);
+                if (version.metadata) {
+                    copy.metadata = { ...version.metadata };
+                    capture(version.metadata, copy.metadata, 'originalImageUrl', () => currentVersion()?.metadata);
+                }
+                return copy;
+            });
+            return draft;
+        });
+        const value = await edit({ ...chat, history });
+        currentMessages = new Set(chat.history || []);
+        const changes = slots.filter(slot => slot.had !== Object.hasOwn(slot.draft, slot.field) || slot.before !== slot.draft[slot.field]);
+        if (!changes.length) return { changed: false, value };
+        if (changes.some(slot => slot.resolve() !== slot.source || slot.had !== Object.hasOwn(slot.source, slot.field) || slot.source[slot.field] !== slot.before)) {
+            throw new Error('图片在处理期间已被修改，请重新开始整理。');
+        }
+        for (const slot of changes) {
+            slot.after = slot.draft[slot.field];
+            slot.hasAfter = Object.hasOwn(slot.draft, slot.field);
+            if (slot.hasAfter) slot.source[slot.field] = slot.after;
+            else delete slot.source[slot.field];
+        }
+        try {
+            const saved = await (type === 'group' ? saveGroup(chat.id) : saveCharacter(chat.id));
+            if (saved !== true) throw Object.assign(new Error('图片整理未保存，已恢复本次修改，可重新尝试。'), { name: 'StorageWriteError' });
+            return { changed: true, value };
+        } catch (error) {
+            currentMessages = new Set(chat.history || []);
+            for (const slot of changes) {
+                if (slot.resolve() !== slot.source || Object.hasOwn(slot.source, slot.field) !== slot.hasAfter || slot.source[slot.field] !== slot.after) continue;
+                if (slot.had) slot.source[slot.field] = slot.before;
+                else delete slot.source[slot.field];
+            }
+            throw error;
+        }
+    });
+    chatMediaEditQueues.set(key, operation);
+    return operation.finally(() => { if (chatMediaEditQueues.get(key) === operation) chatMediaEditQueues.delete(key); });
+};
+
 // 清除旧消息中完全相同的媒体副本。每个会话单独落盘；中断后再次运行仍可继续。
 let chatMediaCompactionPromise = null;
 const compactLegacyChatMedia = () => {
     if (chatMediaCompactionPromise) return chatMediaCompactionPromise;
     chatMediaCompactionPromise = (async () => {
         const result = { chats: 0, duplicateCharacters: 0 };
-        for (const [collection, save] of [[db.characters || [], saveCharacter], [db.groups || [], saveGroup]]) {
+        for (const [collection, type] of [[db.characters || [], 'private'], [db.groups || [], 'group']]) {
             for (const chat of collection) {
-                let changed = false;
-                let removed = 0;
-                for (const message of (chat.history || [])) {
-                    if (!message) continue;
-                    const imagePart = Array.isArray(message.parts)
-                        ? message.parts.find(part => part && part.type === 'image' && typeof part.data === 'string') : null;
-                    if (imagePart && typeof message.content === 'string'
-                        && message.content.startsWith('data:image/') && message.content === imagePart.data) {
-                        const textPart = message.parts.find(part => part && part.type === 'text' && part.text);
-                        message.content = textPart ? textPart.text : '[发来了一张图片：]';
-                        removed += imagePart.data.length;
-                        changed = true;
-                    }
-                    if (message.imageGenerationMeta?.originalImageUrl
-                        && message.imageGenerationMeta.originalImageUrl === message.novelAiImageUrl) {
-                        removed += message.imageGenerationMeta.originalImageUrl.length;
-                        delete message.imageGenerationMeta.originalImageUrl;
-                        changed = true;
-                    }
-                    for (const version of (message._imageVersions || [])) {
-                        if (version?.metadata?.originalImageUrl
-                            && version.metadata.originalImageUrl === version.imageUrl) {
-                            removed += version.metadata.originalImageUrl.length;
-                            delete version.metadata.originalImageUrl;
-                            changed = true;
+                const outcome = await window.editChatMedia(chat, type, draft => {
+                    let removed = 0;
+                    for (const message of draft.history) {
+                        if (!message) continue;
+                        const imagePart = Array.isArray(message.parts)
+                            ? message.parts.find(part => part && part.type === 'image' && typeof part.data === 'string') : null;
+                        if (imagePart && typeof message.content === 'string'
+                            && message.content.startsWith('data:image/') && message.content === imagePart.data) {
+                            const textPart = message.parts.find(part => part && part.type === 'text' && part.text);
+                            message.content = textPart ? textPart.text : '[发来了一张图片：]';
+                            removed += imagePart.data.length;
+                        }
+                        if (message.imageGenerationMeta?.originalImageUrl
+                            && message.imageGenerationMeta.originalImageUrl === message.novelAiImageUrl) {
+                            removed += message.imageGenerationMeta.originalImageUrl.length;
+                            delete message.imageGenerationMeta.originalImageUrl;
+                        }
+                        for (const version of (message._imageVersions || [])) {
+                            if (version?.metadata?.originalImageUrl
+                                && version.metadata.originalImageUrl === version.imageUrl) {
+                                removed += version.metadata.originalImageUrl.length;
+                                delete version.metadata.originalImageUrl;
+                            }
                         }
                     }
-                }
-                if (changed) {
-                    if (await save(chat.id)) {
-                        result.duplicateCharacters += removed;
-                        result.chats++;
-                    }
+                    return removed;
+                });
+                if (outcome.changed) {
+                    result.duplicateCharacters += outcome.value;
+                    result.chats++;
                 }
                 await new Promise(resolve => setTimeout(resolve, 0));
             }

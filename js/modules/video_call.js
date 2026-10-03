@@ -1152,6 +1152,9 @@ const VideoCallModule = {
 
     // === NovelAI 视频通话生图（返回 imageUrl 或 null） ===
     generateVcNovelAiImage: async function(tags) {
+        const callCharacter = this.state.currentChat;
+        const parsed = window.OvoFaceLock?.parsePrompt(tags);
+        const imageContext = window.OvoFaceLock?.capture(callCharacter, 'self');
         const bgEl = document.getElementById('vc-nai-bg');
         const imgEl = document.getElementById('vc-nai-bg-img');
         const loadingEl = document.getElementById('vc-nai-bg-loading');
@@ -1163,7 +1166,8 @@ const VideoCallModule = {
 
         try {
             console.log('[VC-ImageGen] 生成视频通话画面, tags:', tags);
-            const result = await generateImageDispatch(tags);
+            const result = await generateImageDispatch(parsed?.prompt || tags, null, imageContext);
+            if (this.state.currentChat !== callCharacter || !this.state.isCallActive) return null;
             if (result && result.imageUrl) {
                 // 等待图片加载完成后再显示（返回 Promise）
                 await new Promise((resolve) => {
@@ -1187,6 +1191,7 @@ const VideoCallModule = {
             }
         } catch (err) {
             console.error('[VC-NovelAI] 生图失败:', err);
+            if (imageContext?.settings._faceLock) showToast(err.message || '锁脸生图失败');
         } finally {
             if (loadingEl) loadingEl.style.display = 'none';
         }
@@ -1195,6 +1200,9 @@ const VideoCallModule = {
 
     // === GPT 视频通话生图（返回 imageUrl 或 null） ===
     generateVcGptImage: async function(tags) {
+        const callCharacter = this.state.currentChat;
+        const parsed = window.OvoFaceLock?.parsePrompt(tags);
+        const imageContext = window.OvoFaceLock?.capture(callCharacter, 'self', 'gpt');
         const bgEl = document.getElementById('vc-nai-bg');
         const imgEl = document.getElementById('vc-nai-bg-img');
         const loadingEl = document.getElementById('vc-nai-bg-loading');
@@ -1206,7 +1214,8 @@ const VideoCallModule = {
 
         try {
             console.log('[VC-GPT-ImageGen] 生成视频通话画面, tags:', tags);
-            const result = await generateGptImage(tags);
+            const result = await generateGptImage(parsed?.prompt || tags, imageContext?.settings || {});
+            if (this.state.currentChat !== callCharacter || !this.state.isCallActive) return null;
             if (result && result.imageUrl) {
                 // 等待图片加载完成后再显示（返回 Promise）
                 await new Promise((resolve) => {
@@ -1230,6 +1239,7 @@ const VideoCallModule = {
             }
         } catch (err) {
             console.error('[VC-GPT-ImageGen] 生图失败:', err);
+            if (imageContext?.settings._faceLock) showToast(err.message || '锁脸生图失败');
         } finally {
             if (loadingEl) loadingEl.style.display = 'none';
         }

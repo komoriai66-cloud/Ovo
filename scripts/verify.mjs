@@ -241,11 +241,11 @@ function omitNovelAiAdditions(node) {
 omitNovelAiAdditions(protectedDocument);
 // 只排除授权的状态栏入口，并还原两项提醒文案以比较既有布局。
 // 继续使用原保护基线，不接受其他页面的结构变化。
-const statusStorageAdditionIds = ['storage-status-open', 'setting-status-storage-open'];
+const statusStorageAdditionIds = ['storage-status-open', 'setting-status-storage-open', 'storage-save-status', 'storage-save-retry'];
 function omitStatusStorageAdditions(node) {
     node.childNodes = (node.childNodes || []).filter(child => {
         const id = child.attrs?.find(attr => attr.name === 'id')?.value;
-        if (id === 'storage-status-open') return false;
+        if (id === 'storage-status-open' || id === 'storage-save-status') return false;
         const classes = child.attrs?.find(attr => attr.name === 'class')?.value.split(/\s+/) || [];
         if (classes.includes('kkt-item')) {
             if (findNodeById(child, 'setting-status-storage-open')) return false;
@@ -293,6 +293,13 @@ for (const [id, markup] of Object.entries(pomodoroLayoutBaseline)) {
 }
 const pomodoroHistoryNode = findNodeById(protectedDocument, 'pomodoro-history-modal');
 if (pomodoroHistoryNode?.parentNode) pomodoroHistoryNode.parentNode.childNodes = pomodoroHistoryNode.parentNode.childNodes.filter(node => node !== pomodoroHistoryNode);
+// 只排除本次授权新增的锁脸设置和编辑提示，继续保护全部既有节点。
+let faceLockGroup = findNodeById(protectedDocument, 'setting-face-lock-enabled');
+while (faceLockGroup && !faceLockGroup.attrs?.some(attr => attr.name === 'class' && attr.value.split(/\s+/).includes('face-lock-settings'))) faceLockGroup = faceLockGroup.parentNode;
+if (faceLockGroup?.parentNode) faceLockGroup.parentNode.childNodes = faceLockGroup.parentNode.childNodes.filter(node => node !== faceLockGroup);
+else fail('Missing face lock settings group');
+const faceLockEditNote = findNodeById(protectedDocument, 'edit-image-face-lock-note');
+if (faceLockEditNote?.parentNode) faceLockEditNote.parentNode.childNodes = faceLockEditNote.parentNode.childNodes.filter(node => node !== faceLockEditNote);
 const actualDomSignature = getNonScriptDomSignature(protectedDocument);
 if (actualDomSignature !== protectedDomSignature && actualDomSignature !== preexistingWorkspaceDomSignature) {
     fail(`Assembled non-script DOM differs from the protected release structure: ${actualDomSignature}`);
@@ -302,10 +309,12 @@ const duplicateIds = [...new Set(textualIds.filter((id, index) => textualIds.ind
 const momentsRedesignIdDelta = 8;
 const momentsChatLinkIds = ['setting-moments-chat-linked', 'setting-moments-chat-link-hint', 'setting-moments-background-post-enabled', 'setting-moments-background-post-hint'];
 for (const id of momentsChatLinkIds) if (!textualIds.includes(id)) fail(`Missing moments chat linkage ID: ${id}`);
-if (textualIds.length !== 2636 + novelAiAdditionIds.length + statusStorageAdditionIds.length + momentsRedesignIdDelta + momentsChatLinkIds.length + ttsAdditionIds.length + 35) fail(`Unexpected assembled ID count after authorized additions: ${textualIds.length}`);
+const faceLockAdditionIds = ['setting-face-lock-enabled', 'setting-face-lock-reference', 'setting-face-lock-preview', 'setting-face-lock-empty', 'setting-face-lock-change', 'setting-face-lock-status', 'setting-face-lock-file', 'setting-face-lock-source', 'edit-image-face-lock-note'];
+if (textualIds.length !== 2636 + novelAiAdditionIds.length + statusStorageAdditionIds.length + momentsRedesignIdDelta + momentsChatLinkIds.length + ttsAdditionIds.length + 35 + faceLockAdditionIds.length) fail(`Unexpected assembled ID count after authorized additions: ${textualIds.length}`);
 if (duplicateIds.length) fail(`Duplicate assembled IDs: ${duplicateIds.join(', ')}`);
 
 const requiredIds = [
+    ...faceLockAdditionIds,
     ...ttsAdditionIds,
     ...novelAiAdditionIds,
     ...statusStorageAdditionIds,

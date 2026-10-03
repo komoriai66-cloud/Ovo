@@ -342,11 +342,13 @@
     async function recoverPending() {
         const store = table();
         if (!store || typeof getAiReply !== 'function') return;
+        if (window.StorageSaveHealth?.canRunBackground() === false) return;
         const now = Date.now();
         const tasks = (await store.toArray())
             .filter(task => PENDING_STATES.has(task.state))
             .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
         for (const task of tasks) {
+            if (window.StorageSaveHealth?.canRunBackground() === false) break;
             if (activeTasks.has(task.id) && task.ownerId === ownerId && RUNNING_STATES.has(task.state)) continue;
             const ownerHeartbeatAge = now - (task.updatedAt || task.createdAt || 0);
             if (task.ownerId && task.ownerId !== ownerId && ownerHeartbeatAge >= 0 && ownerHeartbeatAge < 6000) {
@@ -363,6 +365,10 @@
             }
             const alreadyAnswered = (chat.history || []).some(message => message && message.replyRequestId === task.id);
             if (alreadyAnswered) {
+                const saved = task.chatType === 'group' && typeof saveGroup === 'function'
+                    ? await saveGroup(task.chatId)
+                    : typeof saveCharacter === 'function' ? await saveCharacter(task.chatId) : false;
+                if (saved === false) continue;
                 await complete(task);
                 continue;
             }
@@ -373,8 +379,10 @@
                 : [];
             if (completedMessages.length) {
                 completedMessages.forEach(message => { if (!message.replyRequestId) message.replyRequestId = task.id; });
-                if (task.chatType === 'group' && typeof saveGroup === 'function') await saveGroup(task.chatId);
-                else if (task.chatType === 'private' && typeof saveCharacter === 'function') await saveCharacter(task.chatId);
+                const saved = task.chatType === 'group' && typeof saveGroup === 'function'
+                    ? await saveGroup(task.chatId)
+                    : typeof saveCharacter === 'function' ? await saveCharacter(task.chatId) : false;
+                if (saved === false) continue;
                 await complete(task);
                 continue;
             }

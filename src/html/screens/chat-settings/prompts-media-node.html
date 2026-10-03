@@ -197,6 +197,32 @@
                                 </div>
                             </div>
                             
+                            <div class="kkt-group face-lock-settings">
+                                <div class="kkt-item">
+                                    <label for="setting-face-lock-enabled" class="kkt-item-label">生图锁脸</label>
+                                    <label class="kkt-switch"><input type="checkbox" id="setting-face-lock-enabled" aria-label="生图锁脸"><span class="kkt-slider"></span></label>
+                                </div>
+                                <p class="face-lock-tip">尽量保持角色长相一致，服装、表情和场景可变化。</p>
+                                <div id="setting-face-lock-reference" hidden>
+                                    <div class="kkt-item face-lock-reference-row">
+                                        <span class="kkt-item-label">人物参考</span>
+                                        <div class="kkt-item-control">
+                                            <img id="setting-face-lock-preview" alt="当前人物参考图" hidden>
+                                            <span id="setting-face-lock-empty">未选择</span>
+                                            <button type="button" id="setting-face-lock-change" class="btn btn-small btn-neutral">更换</button>
+                                        </div>
+                                    </div>
+                                    <p class="face-lock-tip">建议使用单人、面部清晰的图片。换头像不会改变已选参考。</p>
+                                    <p id="setting-face-lock-status" class="face-lock-tip" role="status" aria-live="polite"></p>
+                                </div>
+                                <input type="file" id="setting-face-lock-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                                <select id="setting-face-lock-source" aria-label="更换人物参考" hidden>
+                                    <option value="" disabled>选择图片来源</option>
+                                    <option value="avatar">使用当前头像</option>
+                                    <option value="upload">上传图片</option>
+                                </select>
+                            </div>
+
                             <!-- NovelAI 生图设置（模型/尺寸/画师串） -->
                             <div class="kkt-group" style="margin-top:15px;">
                                 <div style="margin-bottom: 10px; padding-left: 8px;">

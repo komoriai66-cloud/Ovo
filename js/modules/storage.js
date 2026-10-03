@@ -183,6 +183,21 @@ async function analyzeLegacyChatStorage(collections, onProgress) {
 
 function setupStorageAnalysisScreen() {
     window.setupStatusStorageScreen?.();
+    const saveStatus = document.getElementById('storage-save-status');
+    const saveError = saveStatus?.querySelector('p');
+    const saveRetry = document.getElementById('storage-save-retry');
+    const updateSaveStatus = () => { if (saveError) saveError.hidden = !window.StorageSaveHealth?.hasFailures(); };
+    window.addEventListener('ovo-storage-save-health', updateSaveStatus);
+    updateSaveStatus();
+    saveRetry?.addEventListener('click', async () => {
+        saveRetry.disabled = true;
+        try {
+            if (await saveData() === true) showToast('当前数据已保存到本机。');
+        } finally {
+            saveRetry.disabled = false;
+            updateSaveStatus();
+        }
+    });
     const screen = document.getElementById('storage-analysis-screen');
     const chartContainer = document.getElementById('storage-chart-container');
     const detailsList = document.getElementById('storage-details-list');
@@ -684,17 +699,13 @@ function setupStorageAnalysisScreen() {
                 if (typeof db !== 'undefined') {
                     if (db.characters) {
                         for (const char of db.characters) {
-                            if (await compressHistoryImages(char.history) && typeof saveCharacter === 'function') {
-                                if (!await saveCharacter(char.id)) throw new Error('保存角色图片失败');
-                            }
+                            await window.editChatMedia(char, 'private', draft => compressHistoryImages(draft.history));
                         }
                     }
                     
                     if (db.groups) {
                         for (const group of db.groups) {
-                            if (await compressHistoryImages(group.history) && typeof saveGroup === 'function') {
-                                if (!await saveGroup(group.id)) throw new Error('保存群聊图片失败');
-                            }
+                            await window.editChatMedia(group, 'group', draft => compressHistoryImages(draft.history));
                         }
                     }
                 }
@@ -711,7 +722,7 @@ function setupStorageAnalysisScreen() {
                 showToast(`压缩完成！共压缩 ${compressedCount} 张图片，节省了 ${formatBytes(totalSavedBytes)} 空间。`);
             } catch (err) {
                 console.error('批量压缩图片时出错:', err);
-                showToast('压缩过程中出现错误。');
+                if (err.name !== 'StorageWriteError') showToast('图片压缩未完成：' + (err.message || '未知错误'));
             } finally {
                 compressAllBtn.disabled = false;
                 compressAllBtn.textContent = '一键压缩聊天图片';

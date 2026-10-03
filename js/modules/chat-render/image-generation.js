@@ -8,6 +8,14 @@ function saveImageGenerationChat(chatId, chatType) {
 }
 
 window._scheduleBackgroundNaiGen = function(msgId, chatId, chatType, pvContent) {
+    const tagMatch = pvContent.match(/\{\{([\s\S]+?)\}\}/);
+    const parsedPrompt = window.OvoFaceLock?.parsePrompt(tagMatch ? tagMatch[1] : pvContent);
+    const naiPrompt = parsedPrompt ? parsedPrompt.prompt : (tagMatch ? tagMatch[1].trim() : pvContent);
+    const taskChat = chatType === 'private' ? db.characters.find(c => c.id === chatId) : db.groups.find(g => g.id === chatId);
+    const taskMessage = taskChat?.history?.find(message => message.id === msgId);
+    const taskCharacter = window.OvoFaceLock?.messageCharacter(taskChat, chatType, taskMessage);
+    const imageContext = window.OvoFaceLock?.capture(taskCharacter, parsedPrompt?.subject);
+    if (imageContext && chatType === 'group') imageContext.settings._character = null;
     _naiAutoGenQueue.push(async () => {
         // 设置 AbortController 并支持可配置的超时时间
         const controller = new AbortController();
@@ -24,11 +32,8 @@ window._scheduleBackgroundNaiGen = function(msgId, chatId, chatType, pvContent) 
         let errorReason = null;
 
         try {
-            const tagMatch = pvContent.match(/\{\{([\s\S]+?)\}\}/);
-            const naiPrompt = tagMatch ? tagMatch[1].trim() : pvContent;
-            
             console.log('[Image Auto Background] 为消息生图, prompt:', naiPrompt);
-            const result = await generateImageDispatch(naiPrompt, controller.signal);
+            const result = await generateImageDispatch(naiPrompt, controller.signal, imageContext);
             
             if (result && result.imageUrl) {
                 finalImageUrl = result.imageUrl;
@@ -36,6 +41,7 @@ window._scheduleBackgroundNaiGen = function(msgId, chatId, chatType, pvContent) 
                     provider: result.provider || db.activeImageProvider || '', model: result.model || '',
                     size: result.size || '', seed: result.seed ?? null, atmosphere: result.atmosphere || '',
                     vibeGroup: result.vibeGroup || '', vibeCount: result.vibeCount || 0,
+                    faceLock: result.faceLock || null,
                     mimeType: result.mimeType || '', correlationId: result.correlationId || '',
                     requestSnapshot: result.requestSnapshot || null,
                     originalImageUrl: result.originalImageUrl || result.imageUrl,

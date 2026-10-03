@@ -884,6 +884,10 @@ function generateGroupSystemPrompt(group, opts) {
         outputFormats += `\n- **拍一拍**: \`[POKE:actor={发起成员真名}|target={用户或目标成员真名}]\``;
     }
 
+    if (window.OvoFaceLock && group.members.some(member => db.characters.find(character => character.id === member.originalCharId)?.imageFaceLock?.enabled)) {
+        outputFormats += '\n照片需要生图时使用 [{成员真名}发来的照片/视频：中文描述{{english image prompt}}]。' + window.OvoFaceLock.subjectInstruction();
+    }
+
     if (group.allowGossip) {
         outputFormats += `
 - **私聊消息**: \`[Private: {发起者真名} -> {接收者真名}: {内容}]\`

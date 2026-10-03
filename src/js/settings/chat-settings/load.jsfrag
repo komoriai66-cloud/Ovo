@@ -857,6 +857,7 @@ function loadSettingsToSidebar() {
         if (gptArtistEl) {
             gptArtistEl.value = e.gptArtistPrompt || '';
         }
+        window.OvoFaceLock?.loadSettings(e);
 
         const ar = e.autoReply || {};
         document.getElementById('setting-auto-reply-enabled').checked = ar.enabled || false;

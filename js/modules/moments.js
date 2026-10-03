@@ -350,7 +350,7 @@
         if (!media.length) return '';
         const items = media.map((item, index) => {
             if (item.status === 'pending' || item.status === 'error' || item.status === 'working') {
-                return `<div class="moments-media-pending">${esc(item.type === 'image' ? '图片' : '语音')}${item.status === 'error' ? '生成失败' : item.status === 'working' ? '生成中…' : '待生成'}${post.authorId !== 'user' && item.status !== 'working' ? `<button type="button" data-action="generate-media" data-post-id="${esc(post.id)}" data-index="${index}">生成</button>` : ''}</div>`;
+                return `<div class="moments-media-pending">${esc(item.type === 'image' ? '图片' : '语音')}${item.status === 'error' ? '生成失败' + (item.faceLockError ? '：' + esc(item.faceLockError) : '') : item.status === 'working' ? '生成中…' : '待生成'}${post.authorId !== 'user' && item.status !== 'working' ? `<button type="button" data-action="generate-media" data-post-id="${esc(post.id)}" data-index="${index}">生成</button>` : ''}</div>`;
             }
             if (item.type === 'image' || item.type === 'sticker') return `<img class="${item.type === 'sticker' ? 'moments-post-sticker' : ''}" src="${esc(safeImage(item.data))}" alt="${esc(item.type === 'sticker' ? item.name || '表情包' : '动态图片')}" data-action="view-image" data-post-id="${esc(post.id)}" data-index="${index}">`;
             if (item.type === 'video') return `<video src="${esc(safeMedia(item.data, 'video'))}" controls preload="metadata" playsinline></video>`;
@@ -1362,6 +1362,7 @@
         const extraContext = contact?.batchExtras ? Object.entries(contact.batchExtras).filter(([key, value]) => !['voice', 'gap'].includes(key) && String(value || '').trim()).map(([key, value]) => `${key}：${String(value).slice(0, 500)}`).join('\n') : '';
         let prompt = `你是熟人动态模拟器。请只以“${aiName(actorId, actorId)}”的身份写一条${kind === 'story' ? '24小时限时 Story' : '日常动态'}。角色人设：${actor.persona || '未提供'}。你当前的个人签名：${actor.signature || '未设置'}。${contact ? `与${aiName(charActor(contact.ownerCharId), actorId)}的关系：${contact.relationship || '朋友'}。` : ''}${extraContext ? `\n此人自己的补充设定（未公开内容不得泄露）：\n${extraContext}\n` : ''}\n世界设定：${context.world || '无'}\n${context.history ? `该角色近期私聊（仅帮助理解心情，绝不能把聊天秘密、用户隐私或未公开内容转述给其他人）：\n${context.history}\n` : ''}你能看到的近期动态：\n${context.posts || '暂无'}\n你亲历的近期动态操作：\n${activityContext(actorId) || '暂无'}\n${promptRule('postGeneration')}若提及别人，只能提及已被允许查看本帖的人：${audience.map(id => `${id}=${id === 'user' ? socialUserName : aiName(id, actorId)}`).join('，')}。可选用的表情包：${stickerChoices(actorId) || '无'}。请返回严格 JSON 对象，不要 Markdown：{"text":"1到180字自然动态","imagePrompt":"适合配图时填写画面描述，否则留空","voiceText":"适合配语音时填写口语化短句，否则留空","stickerId":"适合配表情包时填写可用表情ID，否则留空","mentions":["被艾特者的ID"]}。`;
         prompt += bilingualContent.prompt(ownCharacter, 'moments', '动态正文及角色录制的语音文字');
+        if (ownCharacter?.imageFaceLock?.enabled) prompt += '\nJSON 额外包含 imageSubject：只有发布者本人单独出镜（自拍、单人人像）填 "self"；风景、食物、宠物、其他人物或多人合照填 "other"。imagePrompt 不包含这个内部标记。';
         let result;
         if (controls?.settings(actorId).publish.habit) prompt += '\n用户设置的发布习惯：' + controls.settings(actorId).publish.habit;
         try { result = await askAI(prompt, actorId, task); }
@@ -1376,7 +1377,7 @@
         if (sticker) media.push({ ...sticker, type: 'sticker', stickerId: sticker.id });
         const imagePrompt = String(result.imagePrompt || '').trim().slice(0, 600);
         const voiceText = String(result.voiceText || '').trim().slice(0, 250);
-        if (settings.imageMode === 'manual' || settings.imageMode === 'auto' || (settings.imageMode === 'ai' && imagePrompt)) media.push({ id: id('media'), type: 'image', status: 'pending', prompt: imagePrompt || text });
+        if (settings.imageMode === 'manual' || settings.imageMode === 'auto' || (settings.imageMode === 'ai' && imagePrompt)) media.push({ id: id('media'), type: 'image', status: 'pending', prompt: imagePrompt || text, imageSubject: result.imageSubject === 'self' ? 'self' : 'other' });
         if (settings.voiceMode === 'manual' || settings.voiceMode === 'auto' || (settings.voiceMode === 'ai' && voiceText)) media.push({ id: id('media'), type: 'audio', status: 'pending', prompt: voiceText || text });
         const mentions = (Array.isArray(result.mentions) ? result.mentions : []).filter(id => audience.includes(id));
         const post = { id: id('moment'), kind, authorId: actorId, text, media, audienceIds: audience, userRecipientPersonaId: knownPersonaId(actorId), viewerPersonaIds: Object.fromEntries(audience.filter(id => id !== 'user').map(id => [id, knownPersonaId(id)])), reminderIds: [], mentions, mentionLabels: Object.fromEntries(mentions.map(id => [id, mentionLabel(text, id, actorId)])), likes: [], comments: [], createdAt: Date.now() };
@@ -1401,15 +1402,18 @@
         const item = post?.media?.[index];
         if (!item || item.status === 'working' || item.status === 'done') return;
         item.status = 'working';
+        delete item.faceLockError;
         renderFeed();
+        const imageContext = item.type === 'image' ? window.OvoFaceLock?.capture(findCharacter(post.authorId), item.imageSubject) : null;
         try {
             if (controls && task) await controls.request(post.authorId, task);
             if (item.type === 'image') {
-                const result = await generateImageDispatch(item.prompt || post.text);
+                const result = await generateImageDispatch(item.prompt || post.text, null, imageContext);
                 if (!result?.imageUrl) throw new Error('生图接口没有返回图片');
                 const blob = await fetch(result.imageUrl).then(response => response.blob());
                 item.data = typeof compressImage === 'function' ? await compressImage(blob, { quality: 0.83, maxWidth: 1440, maxHeight: 1440 }) : await fileToDataUrl(blob);
                 item.mime = blob.type || 'image/png';
+                item.faceLock = result.faceLock || null;
             } else if (item.type === 'audio') {
                 const charId = findCharacter(post.authorId)?.id || ensure().contacts.find(c => c.actorId === post.authorId)?.ownerCharId;
                 const voice = typeof VoiceSelector !== 'undefined' ? VoiceSelector.getVoiceConfig(charId) : null;
@@ -1425,9 +1429,10 @@
             if (feedback) toast('媒体生成成功');
         } catch (error) {
             item.status = 'error';
+            if (imageContext?.settings._faceLock) item.faceLockError = error.message || '锁脸生图失败';
             await persist();
             console.error('动态媒体生成失败', error);
-            if (feedback) toast(error.message || '媒体生成失败');
+            if (feedback || imageContext?.settings._faceLock) toast(error.message || '媒体生成失败');
         }
         renderFeed();
         if (el('moments-detail-screen').classList.contains('active') && state.currentPostId === postId) renderDetail(postId);

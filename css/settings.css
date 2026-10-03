@@ -1,5 +1,22 @@
 /* --- 设置与个人资料样式 --- */
 
+.face-lock-settings .face-lock-tip {
+    margin: 0;
+    padding: 0 15px 10px;
+    font-size: calc(11px * var(--app-font-scale));
+    line-height: 1.5;
+    color: #999;
+    overflow-wrap: anywhere;
+}
+.face-lock-settings .kkt-item-label { min-width: 0; }
+.face-lock-settings .kkt-switch { flex-shrink: 0; }
+.face-lock-reference-row .kkt-item-label { flex-shrink: 0; }
+.face-lock-reference-row .kkt-item-control { min-width: 0; max-width: 70%; }
+.face-lock-reference-row img { width: 42px; height: 42px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+.face-lock-reference-row button { font-size: calc(12px * var(--app-font-scale)); padding: 5px 9px; white-space: nowrap; flex-shrink: 0; }
+.face-lock-reference-row #setting-face-lock-empty { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(12px * var(--app-font-scale)); }
+.face-lock-settings [hidden] { display: none !important; }
+
 #chat-settings-screen, #customize-screen {
     background-color: #ffffff;
 }

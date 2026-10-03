@@ -187,6 +187,7 @@ let autoReplyCheckRunning = false;
 
 async function checkAutoReply() {
     if (autoReplyCheckRunning || typeof db === 'undefined' || !Array.isArray(db.characters)) return;
+    if (window.StorageSaveHealth?.canRunBackground() === false) return;
     autoReplyCheckRunning = true;
     const now = Date.now();
     try {
@@ -231,7 +232,7 @@ async function checkAutoReply() {
                 console.log(`Auto-reply triggered for ${char.remarkName} (mode: ${mode}, interval: ${intervalMs/60000}m)`);
                 char.autoReply.lastAttemptTime = now;
                 // 先持久化尝试标记，但不提前消耗成功周期。
-                await saveCharacter(char.id);
+                if (await saveCharacter(char.id) === false) break;
                 const succeeded = await getAiReply(char.id, 'private', true);
                 if (succeeded) {
                     const completedAt = Date.now();

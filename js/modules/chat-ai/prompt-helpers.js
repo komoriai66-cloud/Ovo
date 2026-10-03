@@ -242,6 +242,9 @@ function getOnlineOutputFormats(character, worldBooksBefore, worldBooksAfter) {
         }
     }
  
+    if (_imgEnabled && character.imageFaceLock?.enabled && window.OvoFaceLock) {
+        photoVideoFormat += '\n' + window.OvoFaceLock.subjectInstruction();
+    }
     let outputFormats = `
 a) 普通消息: [${character.realName}的消息：{消息内容}]
 b) 双语模式下的普通消息（非双语模式请忽略此条）: [${character.realName}的消息：{外语原文}「中文翻译」]

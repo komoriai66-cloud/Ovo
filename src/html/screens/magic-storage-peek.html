@@ -297,6 +297,10 @@
                     <h2 id="storage-total-size"
                         style="margin: 4px 0 0 0; font-size: 24px; color: #333; font-weight: 600;">---</h2>
                 </div>
+                <div id="storage-save-status" style="width: 100%; text-align: center;">
+                    <p role="status" hidden>检测到本地保存失败。请先导出备份，再重试保存。</p>
+                    <button type="button" id="storage-save-retry" class="btn btn-secondary" style="width: 100%;">重试保存当前数据</button>
+                </div>
                 
                 <div style="text-align: center; margin-bottom: 10px;">
                     <button id="compress-all-images-btn" class="btn btn-secondary" style="width: 100%;">一键压缩聊天图片（生图/原图）</button>

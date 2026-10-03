@@ -2255,6 +2255,7 @@ function loadSettingsToSidebar() {
         if (gptArtistEl) {
             gptArtistEl.value = e.gptArtistPrompt || '';
         }
+        window.OvoFaceLock?.loadSettings(e);
 
         const ar = e.autoReply || {};
         document.getElementById('setting-auto-reply-enabled').checked = ar.enabled || false;
@@ -2448,6 +2449,8 @@ async function saveSettingsFromSidebar() {
             return;
         }
         // 保存提醒阈值不删展示历史，整理在独立页面由用户手动确认。
+        try { window.OvoFaceLock?.saveSettings(e); }
+        catch (error) { showToast(error.message); return; }
         try { if (window.Moments) window.Moments.saveCharacterSettings(e); }
         catch (error) { showToast(error.message || '动态设置无效，请检查时间'); return; }
         const avatarPreviewEl = document.getElementById('setting-char-avatar-preview');
